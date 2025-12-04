@@ -16,6 +16,10 @@ const Engine = Matter.Engine,
 const engine = Engine.create();
 engine.gravity.y = 0; // Top-down view, no gravity
 
+// Increase iterations for better collision detection (prevents tunneling)
+engine.positionIterations = 10;
+engine.velocityIterations = 10;
+
 // Create renderer
 const container = document.getElementById('game-container');
 const render = Render.create({
@@ -33,7 +37,7 @@ const render = Render.create({
 const runner = Runner.create();
 
 // Game constants
-const WALL_THICKNESS = 20;
+const WALL_THICKNESS = 40; // Increased for better collision reliability
 const BALL_RADIUS = 20;
 const HOLE_SIZE = 120;
 let BAND_MARGIN = 100; // Will be updated on resize
@@ -238,9 +242,20 @@ function fireBall(body, endPosition) {
     }
 
     if (shouldFire) {
+        // Calculate force
+        const forceMultiplier = 0.002;
+        const maxForce = 0.05; // Cap the force to prevent tunneling
+
+        let forceY = (bandY - body.position.y) * forceMultiplier;
+
+        // Clamp force
+        if (Math.abs(forceY) > maxForce) {
+            forceY = maxForce * Math.sign(forceY);
+        }
+
         Body.applyForce(body, body.position, {
             x: 0,
-            y: (bandY - body.position.y) * 0.002
+            y: forceY
         });
     }
 }
