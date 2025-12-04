@@ -321,29 +321,18 @@ Events.on(render, 'afterRender', function () {
     const width = render.options.width;
     const height = render.options.height;
 
-    // Draw Center Line
-    ctx.beginPath();
-    ctx.moveTo(0, height / 2);
-    ctx.lineTo(width, height / 2);
-    ctx.strokeStyle = '#444';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([10, 10]);
-    ctx.stroke();
-
     // Draw Band Lines (visual guide)
     ctx.beginPath();
     ctx.moveTo(0, BAND_MARGIN);
     ctx.lineTo(width, BAND_MARGIN);
     ctx.strokeStyle = '#444';
     ctx.lineWidth = 6; // Thicker lines
-    ctx.setLineDash([5, 5]);
     ctx.stroke();
 
     ctx.beginPath();
     ctx.moveTo(0, height - BAND_MARGIN);
     ctx.lineTo(width, height - BAND_MARGIN);
     ctx.stroke();
-    ctx.setLineDash([]);
 
     // Draw active bands for all touches
     activeTouches.forEach((data) => {
