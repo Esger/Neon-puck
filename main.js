@@ -42,6 +42,11 @@ const BALL_RADIUS = 20;
 const HOLE_SIZE = 120;
 let BAND_MARGIN = 100; // Will be updated on resize
 
+// Collision Categories
+const CATEGORY_BALL = 0x0001;
+const CATEGORY_WALL = 0x0002;
+const CATEGORY_BAND = 0x0004;
+
 // Function to create game objects
 function createGameObjects() {
     const width = render.options.width;
@@ -54,7 +59,11 @@ function createGameObjects() {
     Engine.clear(engine);
 
     // Walls
-    const wallOptions = { isStatic: true, render: { fillStyle: '#555' } };
+    const wallOptions = {
+        isStatic: true,
+        render: { fillStyle: '#555' },
+        collisionFilter: { category: CATEGORY_WALL }
+    };
     const walls = [
         // Outer walls
         Bodies.rectangle(width / 2, -WALL_THICKNESS / 2, width, WALL_THICKNESS, wallOptions), // Top
@@ -70,25 +79,45 @@ function createGameObjects() {
         Bodies.rectangle(width - centerWallWidth / 2, height / 2, centerWallWidth, WALL_THICKNESS, wallOptions) // Right part
     );
 
+    // Band Walls (Solid barriers)
+    const bandOptions = {
+        isStatic: true,
+        render: { visible: false }, // Drawn manually
+        collisionFilter: { category: CATEGORY_BAND }
+    };
+    // Top Band Area (Solid block above the line)
+    walls.push(Bodies.rectangle(width / 2, BAND_MARGIN / 2, width, BAND_MARGIN, bandOptions));
+    // Bottom Band Area (Solid block below the line)
+    walls.push(Bodies.rectangle(width / 2, height - BAND_MARGIN / 2, width, BAND_MARGIN, bandOptions));
+
     // Balls (Pucks)
     const ballOptions = {
         restitution: 0.9,
         frictionAir: 0.01, // Slightly higher friction to stop them eventually
         render: { fillStyle: '#f00' },
-        label: 'ball'
+        label: 'ball',
+        collisionFilter: {
+            category: CATEGORY_BALL,
+            mask: CATEGORY_WALL | CATEGORY_BAND | CATEGORY_BALL
+        }
     };
 
     const balls = [];
     // 3 balls for each player (example setup)
+    // Ensure they start INSIDE the play area (between bands)
+    const playHeight = height - 2 * BAND_MARGIN;
+    const topZoneCenter = BAND_MARGIN + playHeight / 4;
+    const bottomZoneCenter = height - BAND_MARGIN - playHeight / 4;
+
     // Top player balls
-    balls.push(Bodies.circle(width / 2, height / 4, BALL_RADIUS, ballOptions));
-    balls.push(Bodies.circle(width / 3, height / 4, BALL_RADIUS, ballOptions));
-    balls.push(Bodies.circle(2 * width / 3, height / 4, BALL_RADIUS, ballOptions));
+    balls.push(Bodies.circle(width / 2, topZoneCenter, BALL_RADIUS, ballOptions));
+    balls.push(Bodies.circle(width / 3, topZoneCenter, BALL_RADIUS, ballOptions));
+    balls.push(Bodies.circle(2 * width / 3, topZoneCenter, BALL_RADIUS, ballOptions));
 
     // Bottom player balls
-    balls.push(Bodies.circle(width / 2, 3 * height / 4, BALL_RADIUS, ballOptions));
-    balls.push(Bodies.circle(width / 3, 3 * height / 4, BALL_RADIUS, ballOptions));
-    balls.push(Bodies.circle(2 * width / 3, 3 * height / 4, BALL_RADIUS, ballOptions));
+    balls.push(Bodies.circle(width / 2, bottomZoneCenter, BALL_RADIUS, ballOptions));
+    balls.push(Bodies.circle(width / 3, bottomZoneCenter, BALL_RADIUS, ballOptions));
+    balls.push(Bodies.circle(2 * width / 3, bottomZoneCenter, BALL_RADIUS, ballOptions));
 
     Composite.add(engine.world, [...walls, ...balls]);
 }
@@ -109,6 +138,9 @@ function handleInputStart(x, y, identifier) {
 
     for (const body of clickedBodies) {
         if (body.label === 'ball') {
+            // Disable collision with bands while dragging
+            body.collisionFilter.mask = CATEGORY_WALL | CATEGORY_BALL;
+
             activeTouches.set(identifier, {
                 body: body,
                 startPos: { x, y },
@@ -222,6 +254,29 @@ window.addEventListener('resize', () => {
     location.reload();
 });
 
+// Restore collisions when ball enters play area
+Events.on(engine, 'beforeUpdate', function () {
+    const bodies = Composite.allBodies(engine.world);
+    const width = render.options.width;
+    const height = render.options.height;
+
+    bodies.forEach(body => {
+        if (body.label === 'ball') {
+            // Check if it's missing the BAND mask
+            if ((body.collisionFilter.mask & CATEGORY_BAND) === 0) {
+                // Check if it is safely inside the play area
+                // (Between the two bands)
+                if (body.position.y > BAND_MARGIN + BALL_RADIUS + 5 &&
+                    body.position.y < height - BAND_MARGIN - BALL_RADIUS - 5) {
+
+                    // Restore collision with bands
+                    body.collisionFilter.mask = CATEGORY_WALL | CATEGORY_BAND | CATEGORY_BALL;
+                }
+            }
+        }
+    });
+});
+
 // Shooting Mechanic (Updated for multi-touch)
 function fireBall(body, endPosition) {
     if (body.label !== 'ball') return;
@@ -243,8 +298,8 @@ function fireBall(body, endPosition) {
 
     if (shouldFire) {
         // Calculate force
-        const forceMultiplier = 0.002;
-        const maxForce = 0.05; // Cap the force to prevent tunneling
+        const forceMultiplier = 0.003; // Increased speed
+        const maxForce = 0.1; // Increased cap
 
         let forceY = (bandY - body.position.y) * forceMultiplier;
 
@@ -280,6 +335,7 @@ Events.on(render, 'afterRender', function () {
     ctx.moveTo(0, BAND_MARGIN);
     ctx.lineTo(width, BAND_MARGIN);
     ctx.strokeStyle = '#444';
+    ctx.lineWidth = 6; // Thicker lines
     ctx.setLineDash([5, 5]);
     ctx.stroke();
 
@@ -304,7 +360,7 @@ Events.on(render, 'afterRender', function () {
             ctx.lineTo(body.position.x, body.position.y);
             ctx.lineTo(width, bandY);
 
-            ctx.lineWidth = 4;
+            ctx.lineWidth = 6; // Thicker active band
             ctx.strokeStyle = '#fff';
             ctx.stroke();
         }
