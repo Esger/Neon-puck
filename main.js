@@ -16,6 +16,7 @@ let pucks = [];
 let activePuckIndex = null;
 let dragStart = null;
 let shotAnchor = null;
+let winTimestamp = null;
 let width, height;
 
 // Initialization
@@ -81,6 +82,7 @@ function startGame() {
 
     gameState = "playing";
     winner = null;
+    winTimestamp = null;
 }
 
 // Game Loop
@@ -205,11 +207,19 @@ function update() {
 
     // Win Condition
     if (topCount === 0) {
-        gameState = "won";
-        winner = "top";
+        if (!winTimestamp) winTimestamp = Date.now() + 800; // 1 second delay
+        else if (Date.now() > winTimestamp) {
+            gameState = "won";
+            winner = "top";
+        }
     } else if (bottomCount === 0) {
-        gameState = "won";
-        winner = "bottom";
+        if (!winTimestamp) winTimestamp = Date.now() + 800; // 1 second delay
+        else if (Date.now() > winTimestamp) {
+            gameState = "won";
+            winner = "bottom";
+        }
+    } else {
+        winTimestamp = null; // Reset if condition lost (e.g. ball bounces back?)
     }
 }
 
