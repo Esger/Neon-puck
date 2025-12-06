@@ -42,10 +42,20 @@ function init() {
 }
 
 function handleResize() {
-    width = window.innerWidth;
-    height = window.innerHeight;
-    canvas.width = width;
-    canvas.height = height;
+    const container = document.getElementById('game-container');
+    const rect = container.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+
+    // Set display size (css pixels)
+    width = rect.width;
+    height = rect.height;
+
+    // Set actual size in memory (scaled to account for extra pixel density)
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+
+    // Normalize coordinate system to use css pixels
+    ctx.scale(dpr, dpr);
 
     // If we resize during play, we might need to clamp pucks, but for now just let them be
     if (gameState === "start") {
@@ -276,8 +286,8 @@ function render() {
     ctx.lineCap = "butt";
 
     // Rubber Bands
-    const topBandY = height * 0.1;
-    const bottomBandY = height * 0.9;
+    const topBandY = height * 0.15; // Moved inwards for safety
+    const bottomBandY = height * 0.85; // Moved inwards for safety
 
     drawBand(topBandY, "top", "#ff0099");
     drawBand(bottomBandY, "bottom", "#00f2ff");
@@ -392,8 +402,8 @@ function handleStart(x, y) {
 function handleMove(x, y) {
     if (activePuckIndex !== null) {
         const puck = pucks[activePuckIndex];
-        const topBandY = height * 0.1;
-        const bottomBandY = height * 0.9;
+        const topBandY = height * 0.15;
+        const bottomBandY = height * 0.85;
 
         puck.x = x;
         puck.y = y;

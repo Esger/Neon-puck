@@ -3,12 +3,16 @@ body {
     padding: 0;
     overflow: hidden;
     background-color: #222;
-    touch-action: none; /* Prevent default touch actions like scrolling */
+    touch-action: none;
+    /* Prevent default touch actions like scrolling */
     display: flex;
     justify-content: center;
     align-items: center;
-    height: 100vh;
+    height: 100dvh;
+    /* Use dynamic viewport height for mobile browsers */
     width: 100vw;
+    padding-bottom: env(safe-area-inset-bottom);
+    /* Respect home indicator */
 }
 
 #game-container {
