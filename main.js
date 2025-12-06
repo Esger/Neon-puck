@@ -13,9 +13,7 @@ let animationFrameId;
 let gameState = "start"; // "start", "playing", "won"
 let winner = null;
 let pucks = [];
-let activePuckIndex = null;
-let dragStart = null;
-let shotAnchor = null;
+let activeTouches = new Map(); // Key: touchId, Value: { puckIndex, startX, startY, currentX, currentY, anchor, side }
 let winTimestamp = null;
 let width, height;
 
@@ -65,6 +63,7 @@ function handleResize() {
 
 function startGame() {
     pucks = [];
+    activeTouches.clear(); // Clear any active touches
 
     // Spawn 5 pucks for Top Player
     for (let i = 0; i < 5; i++) {
@@ -112,8 +111,15 @@ function update() {
     const steps = 5;
     for (let s = 0; s < steps; s++) {
         pucks.forEach((puck, index) => {
-            // Skip physics for dragged puck
-            if (index === activePuckIndex) return;
+            // Skip physics for dragged pucks
+            let isDragged = false;
+            for (const touch of activeTouches.values()) {
+                if (touch.puckIndex === index) {
+                    isDragged = true;
+                    break;
+                }
+            }
+            if (isDragged) return;
 
             // Movement
             puck.x += puck.vx / steps;
@@ -154,7 +160,16 @@ function update() {
             // Ball-to-Ball Collisions
             for (let j = index + 1; j < pucks.length; j++) {
                 const other = pucks[j];
-                if (activePuckIndex === j) continue;
+
+                // Check if other is dragged
+                let otherIsDragged = false;
+                for (const touch of activeTouches.values()) {
+                    if (touch.puckIndex === j) {
+                        otherIsDragged = true;
+                        break;
+                    }
+                }
+                if (otherIsDragged) continue;
 
                 const dx = other.x - puck.x;
                 const dy = other.y - puck.y;
@@ -205,8 +220,16 @@ function update() {
     }
 
     // Apply Friction & Count
-    pucks.forEach(puck => {
-        if (activePuckIndex !== puck.id) { // Assuming id matches index for now, but safer to check
+    pucks.forEach((puck, index) => {
+        let isDragged = false;
+        for (const touch of activeTouches.values()) {
+            if (touch.puckIndex === index) {
+                isDragged = true;
+                break;
+            }
+        }
+
+        if (!isDragged) {
             puck.vx *= FRICTION;
             puck.vy *= FRICTION;
         }
@@ -323,17 +346,32 @@ function render() {
 function drawBand(y, side, color) {
     ctx.beginPath();
 
-    let pulled = false;
-    // Check if we are dragging a puck on this side
-    if (activePuckIndex !== null && shotAnchor && activeSide === side) {
-        const puck = pucks[activePuckIndex];
-        ctx.moveTo(0, y);
-        ctx.lineTo(puck.x, puck.y);
-        ctx.lineTo(width, y);
-        pulled = true;
+    // We might have multiple pulls on the same band now (though unlikely with 2 hands, but possible)
+    // Actually, usually one band per side. But if we support multi-touch, maybe we just draw the band to the *last* engaged puck on that side?
+    // Or we could draw multiple lines if multiple pucks are pulled?
+    // For simplicity and visual clarity, let's draw the band through ALL engaged pucks on that side, or just the one being pulled.
+    // The reference implementation drew to the single active puck.
+    // Let's find all touches that are engaged on this side.
+
+    let engagedTouches = [];
+    for (const touch of activeTouches.values()) {
+        if (touch.side === side && touch.anchor) {
+            engagedTouches.push(touch);
+        }
     }
 
-    if (!pulled) {
+    if (engagedTouches.length > 0) {
+        // If multiple, this might look weird. Let's just draw to the first one for now, or iterate?
+        // Drawing a single line connecting them all might be cool but complex.
+        // Let's just draw separate "V" shapes for each pull.
+
+        for (const touch of engagedTouches) {
+            const puck = pucks[touch.puckIndex];
+            ctx.moveTo(0, y);
+            ctx.lineTo(puck.x, puck.y);
+            ctx.lineTo(width, y);
+        }
+    } else {
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
     }
@@ -366,9 +404,7 @@ function drawOverlay(title, subtitle, color) {
 }
 
 // Input Handling
-let activeSide = null; // 'top' or 'bottom'
-
-function handleStart(x, y) {
+function handleStart(x, y, id) {
     if (gameState !== "playing") {
         if (gameState === "start" || gameState === "won") {
             startGame();
@@ -376,8 +412,17 @@ function handleStart(x, y) {
         return;
     }
 
+    // Check if this ID is already active (shouldn't happen usually)
+    if (activeTouches.has(id)) return;
+
     // Hit Test
-    const clickedIndex = pucks.findIndex(p => {
+    // We need to make sure we don't pick up a puck that is ALREADY being dragged by another touch
+    const clickedIndex = pucks.findIndex((p, index) => {
+        // Check if already dragged
+        for (const touch of activeTouches.values()) {
+            if (touch.puckIndex === index) return false;
+        }
+
         const dx = p.x - x;
         const dy = p.y - y;
         return Math.sqrt(dx * dx + dy * dy) < PUCK_RADIUS * 3;
@@ -390,92 +435,110 @@ function handleStart(x, y) {
 
         // Allow dragging if click and puck are on the same side
         if (isClickTop === isPuckTop) {
-            activePuckIndex = clickedIndex;
-            activeSide = isClickTop ? "top" : "bottom"; // Determine side by click position
-            dragStart = { x, y };
+            const side = isClickTop ? "top" : "bottom";
+
+            activeTouches.set(id, {
+                puckIndex: clickedIndex,
+                startX: x,
+                startY: y,
+                currentX: x,
+                currentY: y,
+                anchor: null,
+                side: side
+            });
+
             puck.vx = 0;
             puck.vy = 0;
         }
     }
 }
 
-function handleMove(x, y) {
-    if (activePuckIndex !== null) {
-        const puck = pucks[activePuckIndex];
-        const topBandY = height * 0.15;
-        const bottomBandY = height * 0.85;
+function handleMove(x, y, id) {
+    const touch = activeTouches.get(id);
+    if (!touch) return;
 
-        puck.x = x;
-        puck.y = y;
+    const puck = pucks[touch.puckIndex];
+    const topBandY = height * 0.15;
+    const bottomBandY = height * 0.85;
 
-        // Constrain to the active side
-        if (activeSide === "top") {
-            puck.y = Math.min(puck.y, height / 2 - PUCK_RADIUS - 10);
+    puck.x = x;
+    puck.y = y;
+    touch.currentX = x;
+    touch.currentY = y;
 
-            // Engagement
-            if (puck.y < topBandY) {
-                if (!shotAnchor) shotAnchor = { x: puck.x, y: topBandY };
-            } else {
-                shotAnchor = null;
-            }
+    // Constrain to the active side
+    if (touch.side === "top") {
+        puck.y = Math.min(puck.y, height / 2 - PUCK_RADIUS - 10);
+
+        // Engagement
+        if (puck.y < topBandY) {
+            if (!touch.anchor) touch.anchor = { x: puck.x, y: topBandY };
         } else {
-            puck.y = Math.max(puck.y, height / 2 + PUCK_RADIUS + 10);
+            touch.anchor = null;
+        }
+    } else {
+        puck.y = Math.max(puck.y, height / 2 + PUCK_RADIUS + 10);
 
-            // Engagement
-            if (puck.y > bottomBandY) {
-                if (!shotAnchor) shotAnchor = { x: puck.x, y: bottomBandY };
-            } else {
-                shotAnchor = null;
-            }
+        // Engagement
+        if (puck.y > bottomBandY) {
+            if (!touch.anchor) touch.anchor = { x: puck.x, y: bottomBandY };
+        } else {
+            touch.anchor = null;
         }
     }
 }
 
-function handleEnd() {
-    if (activePuckIndex !== null) {
-        const puck = pucks[activePuckIndex];
+function handleEnd(id) {
+    const touch = activeTouches.get(id);
+    if (!touch) return;
 
-        if (shotAnchor) {
-            // Shoot
-            const vx = (shotAnchor.x - puck.x) * DRAG_FORCE;
-            const vy = (shotAnchor.y - puck.y) * DRAG_FORCE;
+    const puck = pucks[touch.puckIndex];
 
-            puck.vx = vx;
-            puck.vy = vy;
+    if (touch.anchor) {
+        // Shoot
+        const vx = (touch.anchor.x - puck.x) * DRAG_FORCE;
+        const vy = (touch.anchor.y - puck.y) * DRAG_FORCE;
 
-            // Cap speed
-            const speed = Math.sqrt(puck.vx * puck.vx + puck.vy * puck.vy);
-            if (speed > MAX_SPEED) {
-                const ratio = MAX_SPEED / speed;
-                puck.vx *= ratio;
-                puck.vy *= ratio;
-            }
+        puck.vx = vx;
+        puck.vy = vy;
+
+        // Cap speed
+        const speed = Math.sqrt(puck.vx * puck.vx + puck.vy * puck.vy);
+        if (speed > MAX_SPEED) {
+            const ratio = MAX_SPEED / speed;
+            puck.vx *= ratio;
+            puck.vy *= ratio;
         }
-
-        activePuckIndex = null;
-        dragStart = null;
-        shotAnchor = null;
     }
+
+    activeTouches.delete(id);
 }
 
 // Event Wrappers
-function onMouseDown(e) { handleStart(e.clientX, e.clientY); }
-function onMouseMove(e) { handleMove(e.clientX, e.clientY); }
-function onMouseUp(e) { handleEnd(); }
+function onMouseDown(e) { handleStart(e.clientX, e.clientY, 'mouse'); }
+function onMouseMove(e) { handleMove(e.clientX, e.clientY, 'mouse'); }
+function onMouseUp(e) { handleEnd('mouse'); }
 
 function onTouchStart(e) {
     e.preventDefault();
-    const t = e.changedTouches[0];
-    handleStart(t.clientX, t.clientY);
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        handleStart(t.clientX, t.clientY, t.identifier);
+    }
 }
 function onTouchMove(e) {
     e.preventDefault();
-    const t = e.changedTouches[0];
-    handleMove(t.clientX, t.clientY);
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        handleMove(t.clientX, t.clientY, t.identifier);
+    }
 }
 function onTouchEnd(e) {
     e.preventDefault();
-    handleEnd();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        handleEnd(t.identifier);
+    }
 }
 
 // Init
