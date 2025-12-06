@@ -15,7 +15,12 @@ let winner = null;
 let pucks = [];
 let activeTouches = new Map(); // Key: touchId, Value: { puckIndex, startX, startY, currentX, currentY, anchor, side }
 let winTimestamp = null;
+
 let width, height;
+
+// Score State
+let topWins = 0;
+let bottomWins = 0;
 
 // Initialization
 function init() {
@@ -37,6 +42,7 @@ function init() {
 
     // Start Loop
     loop();
+    updateScoreUI();
 }
 
 function handleResize() {
@@ -244,12 +250,16 @@ function update() {
         else if (Date.now() > winTimestamp) {
             gameState = "won";
             winner = "top";
+            topWins++;
+            updateScoreUI();
         }
     } else if (bottomCount === 0) {
         if (!winTimestamp) winTimestamp = Date.now() + 800; // 1 second delay
         else if (Date.now() > winTimestamp) {
             gameState = "won";
             winner = "bottom";
+            bottomWins++;
+            updateScoreUI();
         }
     } else {
         winTimestamp = null; // Reset if condition lost (e.g. ball bounces back?)
@@ -543,3 +553,28 @@ function onTouchEnd(e) {
 
 // Init
 init();
+
+function updateScoreUI() {
+    document.getElementById('score-top').innerHTML = renderTallyHTML(topWins);
+    document.getElementById('score-bottom').innerHTML = renderTallyHTML(bottomWins);
+}
+
+function renderTallyHTML(count) {
+    let html = '';
+    const blocks = Math.floor(count / 5);
+    const remainder = count % 5;
+
+    for (let i = 0; i < blocks; i++) {
+        html += '<div class="tally-block"><div class="mark"></div><div class="mark"></div><div class="mark"></div><div class="mark"></div><div class="slash"></div></div>';
+    }
+
+    if (remainder > 0) {
+        html += '<div class="tally-block">';
+        for (let i = 0; i < remainder; i++) {
+            html += '<div class="mark"></div>';
+        }
+        html += '</div>';
+    }
+
+    return html;
+}
