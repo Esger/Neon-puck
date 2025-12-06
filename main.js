@@ -55,7 +55,7 @@ function handleResize() {
 function startGame() {
     pucks = [];
 
-    // Spawn 5 pucks for Top Player (Pink)
+    // Spawn 5 pucks for Top Player
     for (let i = 0; i < 5; i++) {
         pucks.push({
             id: i,
@@ -63,12 +63,11 @@ function startGame() {
             y: height * 0.25 + (Math.random() * 100 - 50),
             vx: 0,
             vy: 0,
-            color: "#ff0099",
-            owner: "top"
+            color: "#00ff00" // Green
         });
     }
 
-    // Spawn 5 pucks for Bottom Player (Blue)
+    // Spawn 5 pucks for Bottom Player
     for (let i = 0; i < 5; i++) {
         pucks.push({
             id: i + 5,
@@ -76,8 +75,7 @@ function startGame() {
             y: height * 0.75 + (Math.random() * 100 - 50),
             vx: 0,
             vy: 0,
-            color: "#00f2ff",
-            owner: "bottom"
+            color: "#00ff00" // Green
         });
     }
 
@@ -294,7 +292,7 @@ function render() {
 
     // UI Overlays
     if (gameState === "start") {
-        drawOverlay("NEON PUCK", "Click to Start", "#ffffff");
+        drawOverlay("NEON PUCK", "Click to Start", "#00ff00");
     } else if (gameState === "won") {
         const color = winner === "top" ? "#ff0099" : "#00f2ff";
         const text = winner === "top" ? "PINK WINS!" : "BLUE WINS!";
@@ -302,18 +300,17 @@ function render() {
     }
 }
 
-function drawBand(y, owner, color) {
+function drawBand(y, side, color) {
     ctx.beginPath();
 
     let pulled = false;
-    if (activePuckIndex !== null && shotAnchor) {
+    // Check if we are dragging a puck on this side
+    if (activePuckIndex !== null && shotAnchor && activeSide === side) {
         const puck = pucks[activePuckIndex];
-        if (puck.owner === owner) {
-            ctx.moveTo(0, y);
-            ctx.lineTo(puck.x, puck.y);
-            ctx.lineTo(width, y);
-            pulled = true;
-        }
+        ctx.moveTo(0, y);
+        ctx.lineTo(puck.x, puck.y);
+        ctx.lineTo(width, y);
+        pulled = true;
     }
 
     if (!pulled) {
@@ -321,7 +318,7 @@ function drawBand(y, owner, color) {
         ctx.lineTo(width, y);
     }
 
-    ctx.strokeStyle = color; // Simplified color for now
+    ctx.strokeStyle = color;
     ctx.lineWidth = 4;
     ctx.shadowBlur = 10;
     ctx.shadowColor = color;
@@ -349,6 +346,8 @@ function drawOverlay(title, subtitle, color) {
 }
 
 // Input Handling
+let activeSide = null; // 'top' or 'bottom'
+
 function handleStart(x, y) {
     if (gameState !== "playing") {
         if (gameState === "start" || gameState === "won") {
@@ -361,16 +360,18 @@ function handleStart(x, y) {
     const clickedIndex = pucks.findIndex(p => {
         const dx = p.x - x;
         const dy = p.y - y;
-        return Math.sqrt(dx * dx + dy * dy) < PUCK_RADIUS * 3; // Generous hit area
+        return Math.sqrt(dx * dx + dy * dy) < PUCK_RADIUS * 3;
     });
 
     if (clickedIndex !== -1) {
         const puck = pucks[clickedIndex];
-        const isTop = y < height / 2;
+        const isClickTop = y < height / 2;
+        const isPuckTop = puck.y < height / 2;
 
-        // Check ownership
-        if ((puck.owner === "top" && isTop) || (puck.owner === "bottom" && !isTop)) {
+        // Allow dragging if click and puck are on the same side
+        if (isClickTop === isPuckTop) {
             activePuckIndex = clickedIndex;
+            activeSide = isClickTop ? "top" : "bottom"; // Determine side by click position
             dragStart = { x, y };
             puck.vx = 0;
             puck.vy = 0;
@@ -387,8 +388,8 @@ function handleMove(x, y) {
         puck.x = x;
         puck.y = y;
 
-        // Constrain to side
-        if (puck.owner === "top") {
+        // Constrain to the active side
+        if (activeSide === "top") {
             puck.y = Math.min(puck.y, height / 2 - PUCK_RADIUS - 10);
 
             // Engagement
