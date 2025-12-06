@@ -208,10 +208,10 @@ function update() {
     // Win Condition
     if (topCount === 0) {
         gameState = "won";
-        winner = "bottom";
+        winner = "top";
     } else if (bottomCount === 0) {
         gameState = "won";
-        winner = "top";
+        winner = "bottom";
     }
 }
 
