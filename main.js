@@ -1,416 +1,461 @@
-import Matter from 'matter-js';
+// Game Constants
+const PUCK_RADIUS = 15;
+const HOLE_WIDTH = 100;
+const WALL_THICKNESS = 20;
+const FRICTION = 0.995;
+const BOUNCE_DAMPING = 0.9;
+const MAX_SPEED = 50;
+const DRAG_FORCE = 0.30;
 
-// Module aliases
-const Engine = Matter.Engine,
-    Render = Matter.Render,
-    Runner = Matter.Runner,
-    Bodies = Matter.Bodies,
-    Composite = Matter.Composite,
-    Events = Matter.Events,
-    Mouse = Matter.Mouse,
-    MouseConstraint = Matter.MouseConstraint,
-    Vector = Matter.Vector,
-    Body = Matter.Body;
+// State
+let canvas, ctx;
+let animationFrameId;
+let gameState = "start"; // "start", "playing", "won"
+let winner = null;
+let pucks = [];
+let activePuckIndex = null;
+let dragStart = null;
+let shotAnchor = null;
+let width, height;
 
-// Create engine
-const engine = Engine.create();
-engine.gravity.y = 0; // Top-down view, no gravity
+// Initialization
+function init() {
+    canvas = document.createElement('canvas');
+    document.getElementById('game-container').appendChild(canvas);
+    ctx = canvas.getContext('2d');
 
-// Increase iterations for better collision detection (prevents tunneling)
-engine.positionIterations = 10;
-engine.velocityIterations = 10;
+    window.addEventListener('resize', handleResize);
+    handleResize();
 
-// Create renderer
-const container = document.getElementById('game-container');
-const render = Render.create({
-    element: container,
-    engine: engine,
-    options: {
-        width: window.innerWidth,
-        height: window.innerHeight,
-        wireframes: false,
-        background: '#222'
-    }
-});
+    // Input Listeners
+    canvas.addEventListener('mousedown', onMouseDown);
+    canvas.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
 
-// Create runner
-const runner = Runner.create();
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd);
 
-// Game constants
-const WALL_THICKNESS = 40; // Increased for better collision reliability
-const BALL_RADIUS = 20;
-const HOLE_SIZE = 120;
-let BAND_MARGIN = 100; // Will be updated on resize
-
-// Collision Categories
-const CATEGORY_BALL = 0x0001;
-const CATEGORY_WALL = 0x0002;
-const CATEGORY_BAND = 0x0004;
-
-// Function to create game objects
-function createGameObjects() {
-    const width = render.options.width;
-    const height = render.options.height;
-
-    BAND_MARGIN = height * 0.15; // 15% of screen height
-
-    // Clear existing world
-    Composite.clear(engine.world);
-    Engine.clear(engine);
-
-    // Walls
-    const wallOptions = {
-        isStatic: true,
-        render: { fillStyle: '#555' },
-        collisionFilter: { category: CATEGORY_WALL }
-    };
-    const walls = [
-        // Outer walls
-        Bodies.rectangle(width / 2, -WALL_THICKNESS / 2, width, WALL_THICKNESS, wallOptions), // Top
-        Bodies.rectangle(width / 2, height + WALL_THICKNESS / 2, width, WALL_THICKNESS, wallOptions), // Bottom
-        Bodies.rectangle(width + WALL_THICKNESS / 2, height / 2, WALL_THICKNESS, height, wallOptions), // Right
-        Bodies.rectangle(-WALL_THICKNESS / 2, height / 2, WALL_THICKNESS, height, wallOptions), // Left
-    ];
-
-    // Center wall
-    const centerWallWidth = (width - HOLE_SIZE) / 2;
-    walls.push(
-        Bodies.rectangle(centerWallWidth / 2, height / 2, centerWallWidth, WALL_THICKNESS, wallOptions), // Left part
-        Bodies.rectangle(width - centerWallWidth / 2, height / 2, centerWallWidth, WALL_THICKNESS, wallOptions) // Right part
-    );
-
-    // Band Walls (Solid barriers)
-    const bandOptions = {
-        isStatic: true,
-        render: { visible: false }, // Drawn manually
-        collisionFilter: { category: CATEGORY_BAND }
-    };
-    // Top Band Area (Solid block above the line)
-    walls.push(Bodies.rectangle(width / 2, BAND_MARGIN / 2, width, BAND_MARGIN, bandOptions));
-    // Bottom Band Area (Solid block below the line)
-    walls.push(Bodies.rectangle(width / 2, height - BAND_MARGIN / 2, width, BAND_MARGIN, bandOptions));
-
-    // Balls (Pucks)
-    const ballOptions = {
-        restitution: 0.9,
-        frictionAir: 0.01, // Slightly higher friction to stop them eventually
-        render: { fillStyle: '#f00' },
-        label: 'ball',
-        collisionFilter: {
-            category: CATEGORY_BALL,
-            mask: CATEGORY_WALL | CATEGORY_BAND | CATEGORY_BALL
-        }
-    };
-
-    const balls = [];
-    // 3 balls for each player (example setup)
-    // Ensure they start INSIDE the play area (between bands)
-    const playHeight = height - 2 * BAND_MARGIN;
-    const topZoneCenter = BAND_MARGIN + playHeight / 4;
-    const bottomZoneCenter = height - BAND_MARGIN - playHeight / 4;
-
-    // Top player balls
-    balls.push(Bodies.circle(width / 2, topZoneCenter, BALL_RADIUS, ballOptions));
-    balls.push(Bodies.circle(width / 3, topZoneCenter, BALL_RADIUS, ballOptions));
-    balls.push(Bodies.circle(2 * width / 3, topZoneCenter, BALL_RADIUS, ballOptions));
-
-    // Bottom player balls
-    balls.push(Bodies.circle(width / 2, bottomZoneCenter, BALL_RADIUS, ballOptions));
-    balls.push(Bodies.circle(width / 3, bottomZoneCenter, BALL_RADIUS, ballOptions));
-    balls.push(Bodies.circle(2 * width / 3, bottomZoneCenter, BALL_RADIUS, ballOptions));
-
-    Composite.add(engine.world, [...walls, ...balls]);
+    // Start Loop
+    loop();
 }
 
-createGameObjects();
+function handleResize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
 
-// Mouse control (removed/disabled for game logic, replaced by multi-touch)
-// We can keep MouseConstraint for debugging on desktop if needed, but for the game logic we use touches.
-// For desktop testing, we can map mouse events to our touch logic or just keep using mouse for single player testing.
-// Let's implement a unified input handler that supports both if possible, or just focus on Touch + Mouse emulation.
-
-const activeTouches = new Map(); // Map<identifier, { body: Body, startPos: Vector, currentPos: Vector, constraint: Constraint }>
-
-function handleInputStart(x, y, identifier) {
-    const bodies = Composite.allBodies(engine.world);
-    // Find bodies under this point
-    const clickedBodies = Matter.Query.point(bodies, { x, y });
-
-    for (const body of clickedBodies) {
-        if (body.label === 'ball') {
-            // Disable collision with bands while dragging
-            body.collisionFilter.mask = CATEGORY_WALL | CATEGORY_BALL;
-
-            activeTouches.set(identifier, {
-                body: body,
-                startPos: { x, y },
-                currentPos: { x, y },
-                constraint: null // Will be created on move
-            });
-            break; // Only pick one body per touch
-        }
+    // If we resize during play, we might need to clamp pucks, but for now just let them be
+    if (gameState === "start") {
+        // Re-init if needed or just wait for start
     }
 }
 
-function handleInputMove(x, y, identifier) {
-    if (activeTouches.has(identifier)) {
-        const touchData = activeTouches.get(identifier);
-        touchData.currentPos = { x, y };
-        // We could also manually move the body to follow the finger if we want "dragging" feel
-        // But for sling puck, usually you pull back the "band" while the ball stays or moves slightly?
-        // "Balls can be grabbed and shot... by pulling it against the rubberband"
-        // Usually this means the ball follows the finger until it hits the band limit?
-        // Or the ball stays at the band and you pull the "string"?
-        // Let's assume we drag the ball.
+function startGame() {
+    pucks = [];
 
-        // To drag the ball, we can set its position or apply velocity. 
-        // Setting position directly can break physics collisions.
-        // Better to use a constraint or set velocity.
-        // But for simplicity in this MVP, let's just update the visual "aim" and maybe move the ball slightly?
-        // Actually, if we want to "drag" the ball, we should use a temporary constraint (like MouseConstraint does).
-
-        // Let's try just updating the `currentPos` for the visual band, and maybe keep the ball at the touch position?
-        // If we move the ball, we need to respect walls.
-        // A temporary constraint is best.
-
-        if (!touchData.constraint) {
-            touchData.constraint = Matter.Constraint.create({
-                pointA: { x, y },
-                bodyB: touchData.body,
-                stiffness: 0.2,
-                damping: 0.1,
-                length: 0,
-                render: { visible: false }
-            });
-            Composite.add(engine.world, touchData.constraint);
-        }
-
-        touchData.constraint.pointA = { x, y };
-    }
-}
-
-function handleInputEnd(identifier) {
-    if (activeTouches.has(identifier)) {
-        const touchData = activeTouches.get(identifier);
-
-        // Remove constraint
-        if (touchData.constraint) {
-            Composite.remove(engine.world, touchData.constraint);
-        }
-
-        // Fire!
-        fireBall(touchData.body, touchData.currentPos);
-
-        activeTouches.delete(identifier);
-    }
-}
-
-// Touch Events
-render.canvas.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-        handleInputStart(touch.clientX, touch.clientY, touch.identifier);
-    }
-});
-
-render.canvas.addEventListener('touchmove', (e) => {
-    e.preventDefault();
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-        handleInputMove(touch.clientX, touch.clientY, touch.identifier);
-    }
-});
-
-render.canvas.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-        handleInputEnd(touch.identifier);
-    }
-});
-
-// Mouse Events (for desktop testing)
-render.canvas.addEventListener('mousedown', (e) => {
-    handleInputStart(e.clientX, e.clientY, 'mouse');
-});
-
-render.canvas.addEventListener('mousemove', (e) => {
-    handleInputMove(e.clientX, e.clientY, 'mouse');
-});
-
-render.canvas.addEventListener('mouseup', (e) => {
-    handleInputEnd('mouse');
-});
-
-
-// Run the engine
-Runner.run(runner, engine);
-Render.run(render);
-
-// Handle window resize
-window.addEventListener('resize', () => {
-    // Reload to reset physics and layout
-    location.reload();
-});
-
-// Restore collisions when ball enters play area
-Events.on(engine, 'beforeUpdate', function () {
-    const bodies = Composite.allBodies(engine.world);
-    const width = render.options.width;
-    const height = render.options.height;
-
-    bodies.forEach(body => {
-        if (body.label === 'ball') {
-            // Check if it's missing the BAND mask
-            if ((body.collisionFilter.mask & CATEGORY_BAND) === 0) {
-                // Check if it is safely inside the play area
-                // (Between the two bands)
-                if (body.position.y > BAND_MARGIN + BALL_RADIUS + 5 &&
-                    body.position.y < height - BAND_MARGIN - BALL_RADIUS - 5) {
-
-                    // Restore collision with bands
-                    body.collisionFilter.mask = CATEGORY_WALL | CATEGORY_BAND | CATEGORY_BALL;
-                }
-            }
-        }
-    });
-});
-
-// Shooting Mechanic (Updated for multi-touch)
-function fireBall(body, endPosition) {
-    if (body.label !== 'ball') return;
-
-    const width = render.options.width;
-    const height = render.options.height;
-    const isTopSide = body.position.y < height / 2;
-
-    // Define band line Y coordinate
-    const bandY = isTopSide ? BAND_MARGIN : height - BAND_MARGIN;
-
-    // Check if pulled back correctly
-    let shouldFire = false;
-    if (isTopSide && body.position.y < bandY) {
-        shouldFire = true;
-    } else if (!isTopSide && body.position.y > bandY) {
-        shouldFire = true;
-    }
-
-    if (shouldFire) {
-        // Calculate force
-        const forceMultiplier = 0.003; // Increased speed
-        const maxForce = 0.1; // Increased cap
-
-        let forceY = (bandY - body.position.y) * forceMultiplier;
-
-        // Clamp force
-        if (Math.abs(forceY) > maxForce) {
-            forceY = maxForce * Math.sign(forceY);
-        }
-
-        Body.applyForce(body, body.position, {
-            x: 0,
-            y: forceY
+    // Spawn 5 pucks for Top Player (Pink)
+    for (let i = 0; i < 5; i++) {
+        pucks.push({
+            id: i,
+            x: width / 2 + (Math.random() * 200 - 100),
+            y: height * 0.25 + (Math.random() * 100 - 50),
+            vx: 0,
+            vy: 0,
+            color: "#ff0099",
+            owner: "top"
         });
     }
+
+    // Spawn 5 pucks for Bottom Player (Blue)
+    for (let i = 0; i < 5; i++) {
+        pucks.push({
+            id: i + 5,
+            x: width / 2 + (Math.random() * 200 - 100),
+            y: height * 0.75 + (Math.random() * 100 - 50),
+            vx: 0,
+            vy: 0,
+            color: "#00f2ff",
+            owner: "bottom"
+        });
+    }
+
+    gameState = "playing";
+    winner = null;
 }
 
-// Visuals for the rubber band
-Events.on(render, 'afterRender', function () {
-    const ctx = render.context;
-    const width = render.options.width;
-    const height = render.options.height;
+// Game Loop
+function loop() {
+    update();
+    render();
+    animationFrameId = requestAnimationFrame(loop);
+}
 
-    // Draw Band Lines (visual guide)
-    ctx.beginPath();
-    ctx.moveTo(0, BAND_MARGIN);
-    ctx.lineTo(width, BAND_MARGIN);
-    ctx.strokeStyle = '#444';
-    ctx.lineWidth = 6; // Thicker lines
-    ctx.stroke();
+function update() {
+    if (gameState !== "playing") return;
 
-    ctx.beginPath();
-    ctx.moveTo(0, height - BAND_MARGIN);
-    ctx.lineTo(width, height - BAND_MARGIN);
-    ctx.stroke();
+    let topCount = 0;
+    let bottomCount = 0;
 
-    // Draw active bands for all touches
-    activeTouches.forEach((data) => {
-        const body = data.body;
-        const isTopSide = body.position.y < height / 2;
-        const bandY = isTopSide ? BAND_MARGIN : height - BAND_MARGIN;
+    // Physics Steps
+    const steps = 5;
+    for (let s = 0; s < steps; s++) {
+        pucks.forEach((puck, index) => {
+            // Skip physics for dragged puck
+            if (index === activePuckIndex) return;
 
-        // Check if "tension" exists
-        if ((isTopSide && body.position.y < bandY) ||
-            (!isTopSide && body.position.y > bandY)) {
+            // Movement
+            puck.x += puck.vx / steps;
+            puck.y += puck.vy / steps;
 
-            ctx.beginPath();
-            ctx.moveTo(0, bandY);
-            ctx.lineTo(body.position.x, body.position.y);
-            ctx.lineTo(width, bandY);
+            // Wall Collisions
+            if (puck.x - PUCK_RADIUS < 0) { puck.x = PUCK_RADIUS; puck.vx *= -BOUNCE_DAMPING; }
+            if (puck.x + PUCK_RADIUS > width) { puck.x = width - PUCK_RADIUS; puck.vx *= -BOUNCE_DAMPING; }
+            if (puck.y - PUCK_RADIUS < 0) { puck.y = PUCK_RADIUS; puck.vy *= -BOUNCE_DAMPING; }
+            if (puck.y + PUCK_RADIUS > height) { puck.y = height - PUCK_RADIUS; puck.vy *= -BOUNCE_DAMPING; }
 
-            ctx.lineWidth = 6; // Thicker active band
-            ctx.strokeStyle = '#fff';
-            ctx.stroke();
+            // Center Barrier
+            const wallY = height / 2;
+            const wallLeftEnd = width / 2 - HOLE_WIDTH / 2;
+            const wallRightStart = width / 2 + HOLE_WIDTH / 2;
+            const halfWallThick = WALL_THICKNESS / 2;
+
+            // Rectangular parts
+            if (puck.y + PUCK_RADIUS >= wallY - halfWallThick && puck.y - PUCK_RADIUS <= wallY + halfWallThick) {
+                // Left Wall
+                if (puck.x <= wallLeftEnd) {
+                    if (puck.y < wallY) puck.y = wallY - halfWallThick - PUCK_RADIUS - 1;
+                    else puck.y = wallY + halfWallThick + PUCK_RADIUS + 1;
+                    puck.vy *= -BOUNCE_DAMPING;
+                }
+                // Right Wall
+                else if (puck.x >= wallRightStart) {
+                    if (puck.y < wallY) puck.y = wallY - halfWallThick - PUCK_RADIUS - 1;
+                    else puck.y = wallY + halfWallThick + PUCK_RADIUS + 1;
+                    puck.vy *= -BOUNCE_DAMPING;
+                }
+            }
+
+            // Cap Collisions (Circles at ends of walls)
+            checkCapCollision(puck, wallLeftEnd, wallY, halfWallThick);
+            checkCapCollision(puck, wallRightStart, wallY, halfWallThick);
+
+            // Ball-to-Ball Collisions
+            for (let j = index + 1; j < pucks.length; j++) {
+                const other = pucks[j];
+                if (activePuckIndex === j) continue;
+
+                const dx = other.x - puck.x;
+                const dy = other.y - puck.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const minDist = PUCK_RADIUS * 2;
+
+                if (dist < minDist) {
+                    // Resolve Overlap
+                    const overlap = minDist - dist;
+                    const angle = Math.atan2(dy, dx);
+                    const moveX = (Math.cos(angle) * overlap) / 2;
+                    const moveY = (Math.sin(angle) * overlap) / 2;
+
+                    puck.x -= moveX;
+                    puck.y -= moveY;
+                    other.x += moveX;
+                    other.y += moveY;
+
+                    // Resolve Velocity (Elastic)
+                    const nx = dx / dist;
+                    const ny = dy / dist;
+                    const tx = -ny;
+                    const ty = nx;
+
+                    const dpTan1 = puck.vx * tx + puck.vy * ty;
+                    const dpTan2 = other.vx * tx + other.vy * ty;
+
+                    const dpNorm1 = puck.vx * nx + puck.vy * ny;
+                    const dpNorm2 = other.vx * nx + other.vy * ny;
+
+                    // Equal mass
+                    const m1 = 1, m2 = 1;
+                    const mom1 = (dpNorm1 * (m1 - m2) + 2 * m2 * dpNorm2) / (m1 + m2);
+                    const mom2 = (dpNorm2 * (m2 - m1) + 2 * m1 * dpNorm1) / (m1 + m2);
+
+                    puck.vx = tx * dpTan1 + nx * mom1;
+                    puck.vy = ty * dpTan1 + ny * mom1;
+                    other.vx = tx * dpTan2 + nx * mom2;
+                    other.vy = ty * dpTan2 + ny * mom2;
+
+                    puck.vx *= BOUNCE_DAMPING;
+                    puck.vy *= BOUNCE_DAMPING;
+                    other.vx *= BOUNCE_DAMPING;
+                    other.vy *= BOUNCE_DAMPING;
+                }
+            }
+        });
+    }
+
+    // Apply Friction & Count
+    pucks.forEach(puck => {
+        if (activePuckIndex !== puck.id) { // Assuming id matches index for now, but safer to check
+            puck.vx *= FRICTION;
+            puck.vy *= FRICTION;
         }
+
+        if (puck.y < height / 2) topCount++;
+        else bottomCount++;
     });
-});
 
-// Win Condition Check
-Events.on(engine, 'afterUpdate', function () {
-    const width = render.options.width;
-    const height = render.options.height;
+    // Win Condition
+    if (topCount === 0) {
+        gameState = "won";
+        winner = "bottom";
+    } else if (bottomCount === 0) {
+        gameState = "won";
+        winner = "top";
+    }
+}
 
-    let topBalls = 0;
-    let bottomBalls = 0;
+function checkCapCollision(puck, capX, capY, halfWallThick) {
+    const dx = puck.x - capX;
+    const dy = puck.y - capY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const radiusSum = halfWallThick + PUCK_RADIUS;
 
-    const bodies = Composite.allBodies(engine.world);
-    bodies.forEach(body => {
-        if (body.label === 'ball') {
-            if (body.position.y < height / 2) {
-                topBalls++;
+    if (dist < radiusSum) {
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const overlap = radiusSum - dist;
+
+        puck.x += nx * overlap;
+        puck.y += ny * overlap;
+
+        const dp = puck.vx * nx + puck.vy * ny;
+        puck.vx -= 2 * dp * nx;
+        puck.vy -= 2 * dp * ny;
+
+        puck.vx *= BOUNCE_DAMPING;
+        puck.vy *= BOUNCE_DAMPING;
+    }
+}
+
+function render() {
+    // Clear
+    ctx.fillStyle = "#0f1119";
+    ctx.fillRect(0, 0, width, height);
+
+    // Draw Field
+    ctx.lineWidth = WALL_THICKNESS;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#ffffff";
+
+    // Glow
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = "#ffffff";
+
+    // Center Line Left
+    ctx.beginPath();
+    ctx.moveTo(0, height / 2);
+    ctx.lineTo(width / 2 - HOLE_WIDTH / 2, height / 2);
+    ctx.stroke();
+
+    // Center Line Right
+    ctx.beginPath();
+    ctx.moveTo(width / 2 + HOLE_WIDTH / 2, height / 2);
+    ctx.lineTo(width, height / 2);
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.lineCap = "butt";
+
+    // Rubber Bands
+    const topBandY = height * 0.1;
+    const bottomBandY = height * 0.9;
+
+    drawBand(topBandY, "top", "#ff0099");
+    drawBand(bottomBandY, "bottom", "#00f2ff");
+
+    // Pucks
+    pucks.forEach(puck => {
+        ctx.beginPath();
+        ctx.arc(puck.x, puck.y, PUCK_RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = puck.color;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = puck.color;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // Inner ring
+        ctx.beginPath();
+        ctx.arc(puck.x, puck.y, PUCK_RADIUS * 0.6, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,255,255,0.5)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    });
+
+    // UI Overlays
+    if (gameState === "start") {
+        drawOverlay("NEON PUCK", "Click to Start", "#ffffff");
+    } else if (gameState === "won") {
+        const color = winner === "top" ? "#ff0099" : "#00f2ff";
+        const text = winner === "top" ? "PINK WINS!" : "BLUE WINS!";
+        drawOverlay(text, "Click to Restart", color);
+    }
+}
+
+function drawBand(y, owner, color) {
+    ctx.beginPath();
+
+    let pulled = false;
+    if (activePuckIndex !== null && shotAnchor) {
+        const puck = pucks[activePuckIndex];
+        if (puck.owner === owner) {
+            ctx.moveTo(0, y);
+            ctx.lineTo(puck.x, puck.y);
+            ctx.lineTo(width, y);
+            pulled = true;
+        }
+    }
+
+    if (!pulled) {
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+    }
+
+    ctx.strokeStyle = color; // Simplified color for now
+    ctx.lineWidth = 4;
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = color;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+}
+
+function drawOverlay(title, subtitle, color) {
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    ctx.font = "bold 60px Arial";
+    ctx.fillStyle = color;
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = color;
+    ctx.fillText(title, width / 2, height / 2 - 20);
+    ctx.shadowBlur = 0;
+
+    ctx.font = "30px Arial";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(subtitle, width / 2, height / 2 + 40);
+}
+
+// Input Handling
+function handleStart(x, y) {
+    if (gameState !== "playing") {
+        if (gameState === "start" || gameState === "won") {
+            startGame();
+        }
+        return;
+    }
+
+    // Hit Test
+    const clickedIndex = pucks.findIndex(p => {
+        const dx = p.x - x;
+        const dy = p.y - y;
+        return Math.sqrt(dx * dx + dy * dy) < PUCK_RADIUS * 3; // Generous hit area
+    });
+
+    if (clickedIndex !== -1) {
+        const puck = pucks[clickedIndex];
+        const isTop = y < height / 2;
+
+        // Check ownership
+        if ((puck.owner === "top" && isTop) || (puck.owner === "bottom" && !isTop)) {
+            activePuckIndex = clickedIndex;
+            dragStart = { x, y };
+            puck.vx = 0;
+            puck.vy = 0;
+        }
+    }
+}
+
+function handleMove(x, y) {
+    if (activePuckIndex !== null) {
+        const puck = pucks[activePuckIndex];
+        const topBandY = height * 0.1;
+        const bottomBandY = height * 0.9;
+
+        puck.x = x;
+        puck.y = y;
+
+        // Constrain to side
+        if (puck.owner === "top") {
+            puck.y = Math.min(puck.y, height / 2 - PUCK_RADIUS - 10);
+
+            // Engagement
+            if (puck.y < topBandY) {
+                if (!shotAnchor) shotAnchor = { x: puck.x, y: topBandY };
             } else {
-                bottomBalls++;
+                shotAnchor = null;
+            }
+        } else {
+            puck.y = Math.max(puck.y, height / 2 + PUCK_RADIUS + 10);
+
+            // Engagement
+            if (puck.y > bottomBandY) {
+                if (!shotAnchor) shotAnchor = { x: puck.x, y: bottomBandY };
+            } else {
+                shotAnchor = null;
             }
         }
-    });
-
-    if (topBalls === 0) {
-        showWinMessage("Top Player Wins!");
-    } else if (bottomBalls === 0) {
-        showWinMessage("Bottom Player Wins!");
     }
-});
-
-function showWinMessage(message) {
-    if (engine.enabled === false) return;
-
-    engine.enabled = false;
-    runner.enabled = false;
-
-    const msg = document.createElement('div');
-    msg.style.position = 'absolute';
-    msg.style.top = '50%';
-    msg.style.left = '50%';
-    msg.style.transform = 'translate(-50%, -50%)';
-    msg.style.color = 'white';
-    msg.style.fontSize = '40px';
-    msg.style.fontFamily = 'Arial, sans-serif';
-    msg.style.background = 'rgba(0,0,0,0.8)';
-    msg.style.padding = '20px';
-    msg.style.borderRadius = '10px';
-    msg.style.textAlign = 'center';
-    msg.innerText = message;
-
-    const btn = document.createElement('button');
-    btn.innerText = "Restart";
-    btn.style.display = 'block';
-    btn.style.margin = '20px auto 0';
-    btn.style.fontSize = '20px';
-    btn.style.padding = '10px 20px';
-    btn.style.cursor = 'pointer';
-    btn.onclick = () => location.reload();
-    msg.appendChild(btn);
-
-    document.body.appendChild(msg);
 }
+
+function handleEnd() {
+    if (activePuckIndex !== null) {
+        const puck = pucks[activePuckIndex];
+
+        if (shotAnchor) {
+            // Shoot
+            const vx = (shotAnchor.x - puck.x) * DRAG_FORCE;
+            const vy = (shotAnchor.y - puck.y) * DRAG_FORCE;
+
+            puck.vx = vx;
+            puck.vy = vy;
+
+            // Cap speed
+            const speed = Math.sqrt(puck.vx * puck.vx + puck.vy * puck.vy);
+            if (speed > MAX_SPEED) {
+                const ratio = MAX_SPEED / speed;
+                puck.vx *= ratio;
+                puck.vy *= ratio;
+            }
+        }
+
+        activePuckIndex = null;
+        dragStart = null;
+        shotAnchor = null;
+    }
+}
+
+// Event Wrappers
+function onMouseDown(e) { handleStart(e.clientX, e.clientY); }
+function onMouseMove(e) { handleMove(e.clientX, e.clientY); }
+function onMouseUp(e) { handleEnd(); }
+
+function onTouchStart(e) {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    handleStart(t.clientX, t.clientY);
+}
+function onTouchMove(e) {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    handleMove(t.clientX, t.clientY);
+}
+function onTouchEnd(e) {
+    e.preventDefault();
+    handleEnd();
+}
+
+// Init
+init();
