@@ -5,7 +5,9 @@ const WALL_THICKNESS = 20;
 const FRICTION = 0.995;
 const BOUNCE_DAMPING = 0.9;
 const MAX_SPEED = 50;
+
 const DRAG_FORCE = 0.30;
+const GAP_OFFSET = Math.min(200, document.documentElement.clientWidth / 4);
 
 // State
 let canvas, ctx;
@@ -19,7 +21,7 @@ let winTimestamp = null;
 let width, height;
 
 // Score State
-let topWins = 0;
+let topWins = 1;
 let bottomWins = 0;
 
 // Initialization
@@ -137,31 +139,31 @@ function update() {
             if (puck.y - PUCK_RADIUS < 0) { puck.y = PUCK_RADIUS; puck.vy *= -BOUNCE_DAMPING; }
             if (puck.y + PUCK_RADIUS > height) { puck.y = height - PUCK_RADIUS; puck.vy *= -BOUNCE_DAMPING; }
 
-            // Center Barrier
+            // Center Barrier Logic
             const wallY = height / 2;
-            const wallLeftEnd = width / 2 - HOLE_WIDTH / 2;
-            const wallRightStart = width / 2 + HOLE_WIDTH / 2;
             const halfWallThick = WALL_THICKNESS / 2;
 
-            // Rectangular parts
-            if (puck.y + PUCK_RADIUS >= wallY - halfWallThick && puck.y - PUCK_RADIUS <= wallY + halfWallThick) {
-                // Left Wall
-                if (puck.x <= wallLeftEnd) {
-                    if (puck.y < wallY) puck.y = wallY - halfWallThick - PUCK_RADIUS - 1;
-                    else puck.y = wallY + halfWallThick + PUCK_RADIUS + 1;
-                    puck.vy *= -BOUNCE_DAMPING;
-                }
-                // Right Wall
-                else if (puck.x >= wallRightStart) {
-                    if (puck.y < wallY) puck.y = wallY - halfWallThick - PUCK_RADIUS - 1;
-                    else puck.y = wallY + halfWallThick + PUCK_RADIUS + 1;
-                    puck.vy *= -BOUNCE_DAMPING;
-                }
-            }
+            const walls = getWallSegments();
 
-            // Cap Collisions (Circles at ends of walls)
-            checkCapCollision(puck, wallLeftEnd, wallY, halfWallThick);
-            checkCapCollision(puck, wallRightStart, wallY, halfWallThick);
+            walls.forEach(segment => {
+                const wallLeft = segment.start;
+                const wallRight = segment.end;
+
+                // Rectangular parts
+                if (puck.y + PUCK_RADIUS >= wallY - halfWallThick && puck.y - PUCK_RADIUS <= wallY + halfWallThick) {
+                    if (puck.x >= wallLeft && puck.x <= wallRight) {
+                        if (puck.y < wallY) puck.y = wallY - halfWallThick - PUCK_RADIUS - 1;
+                        else puck.y = wallY + halfWallThick + PUCK_RADIUS + 1;
+                        puck.vy *= -BOUNCE_DAMPING;
+                    }
+                }
+
+                // Cap Collisions (Circles at ends of walls)
+                // We check caps for every segment end, unless it's the screen edge
+                if (wallLeft > 0) checkCapCollision(puck, wallLeft, wallY, halfWallThick);
+                if (wallRight < width) checkCapCollision(puck, wallRight, wallY, halfWallThick);
+            });
+
 
             // Ball-to-Ball Collisions
             for (let j = index + 1; j < pucks.length; j++) {
@@ -303,17 +305,13 @@ function render() {
     ctx.shadowBlur = 15;
     ctx.shadowColor = "#ffffff";
 
-    // Center Line Left
-    ctx.beginPath();
-    ctx.moveTo(0, height / 2);
-    ctx.lineTo(width / 2 - HOLE_WIDTH / 2, height / 2);
-    ctx.stroke();
-
-    // Center Line Right
-    ctx.beginPath();
-    ctx.moveTo(width / 2 + HOLE_WIDTH / 2, height / 2);
-    ctx.lineTo(width, height / 2);
-    ctx.stroke();
+    const walls = getWallSegments();
+    walls.forEach(segment => {
+        ctx.beginPath();
+        ctx.moveTo(segment.start, height / 2);
+        ctx.lineTo(segment.end, height / 2);
+        ctx.stroke();
+    });
 
     ctx.shadowBlur = 0;
     ctx.lineCap = "butt";
@@ -578,3 +576,36 @@ function renderTallyHTML(count) {
 
     return html;
 }
+
+function getWallSegments() {
+    const level = topWins + bottomWins;
+    const center = width / 2;
+    const halfHole = HOLE_WIDTH / 2;
+
+    if (level === 0) {
+        // Level 1: One central hole
+        return [
+            { start: 0, end: center - halfHole },
+            { start: center + halfHole, end: width }
+        ];
+    } else {
+        // Level 2+: Two holes
+        // Hole 1 centered at center - GAP_OFFSET
+        // Hole 2 centered at center + GAP_OFFSET
+        //
+        // Walls:
+        // 1. Left of Hole 1
+        // 2. Between Hole 1 and Hole 2 (Central Block)
+        // 3. Right of Hole 2
+
+        const hole1Center = center - GAP_OFFSET;
+        const hole2Center = center + GAP_OFFSET;
+
+        return [
+            { start: 0, end: hole1Center - halfHole }, // Left Wall
+            { start: hole1Center + halfHole, end: hole2Center - halfHole }, // Middle Block
+            { start: hole2Center + halfHole, end: width } // Right Wall
+        ];
+    }
+}
+
