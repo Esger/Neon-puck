@@ -21,7 +21,7 @@ let winTimestamp = null;
 let width, height;
 
 // Score State
-let topWins = 1;
+let topWins = 0;
 let bottomWins = 0;
 
 // Initialization
@@ -162,6 +162,12 @@ function update() {
                 // We check caps for every segment end, unless it's the screen edge
                 if (wallLeft > 0) checkCapCollision(puck, wallLeft, wallY, halfWallThick);
                 if (wallRight < width) checkCapCollision(puck, wallRight, wallY, halfWallThick);
+            });
+
+            // Obstacles
+            const obstacles = getObstacles();
+            obstacles.forEach(obs => {
+                checkCapCollision(puck, obs.x, obs.y, obs.radius);
             });
 
 
@@ -310,7 +316,18 @@ function render() {
         ctx.beginPath();
         ctx.moveTo(segment.start, height / 2);
         ctx.lineTo(segment.end, height / 2);
+        ctx.lineTo(segment.end, height / 2);
         ctx.stroke();
+    });
+
+    const obstacles = getObstacles();
+    obstacles.forEach(obs => {
+        ctx.beginPath();
+        ctx.arc(obs.x, obs.y, obs.radius, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffffff";
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = "#ffffff";
+        ctx.fill();
     });
 
     ctx.shadowBlur = 0;
@@ -609,3 +626,41 @@ function getWallSegments() {
     }
 }
 
+function getObstacles() {
+    const level = topWins + bottomWins;
+    // Obstacles start appearing after 2 wins (Level 2+)
+    if (level < 2) return [];
+
+    const center = width / 2;
+    const hole1Center = center - GAP_OFFSET;
+    const hole2Center = center + GAP_OFFSET;
+
+    // Positioned exactly between wall and rubber band
+    // Wall Y = height/2
+    // Top Band Y = height * 0.15
+    // Bottom Band Y = height * 0.85
+
+    const topObsY = (height / 2 + height * 0.15) / 2;
+    const bottomObsY = (height / 2 + height * 0.85) / 2;
+
+    // Slightly bigger than half wall thickness to appear thicker visually
+    const radius = (WALL_THICKNESS / 2) * 1.3;
+
+    const level1Obstacles = [
+        { x: hole2Center, y: topObsY, radius: radius },
+        { x: hole1Center, y: bottomObsY, radius: radius },
+    ];
+
+    const level2Obstacles = [
+        { x: hole1Center, y: topObsY, radius: radius },
+        { x: hole2Center, y: bottomObsY, radius: radius },
+    ];
+
+    if (level === 2) {
+        // Level 2: Only top obstacles (as requested "top left and top right")
+        return level1Obstacles;
+    } else {
+        // Level 3+: 4 obstacles
+        return [...level1Obstacles, ...level2Obstacles];
+    }
+}
