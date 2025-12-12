@@ -599,14 +599,25 @@ function getWallSegments() {
     const center = width / 2;
     const halfHole = HOLE_WIDTH / 2;
 
+
+
     if (level === 0) {
         // Level 1: One central hole
         return [
             { start: 0, end: center - halfHole },
             { start: center + halfHole, end: width }
         ];
+    } else if (level >= 4) {
+        // Level 4: One moving hole
+        const speed = 0.0015;
+        const range = width * 0.22;
+        const offset = Math.sin(Date.now() * speed) * range;
+        return [
+            { start: 0, end: center + offset - halfHole },
+            { start: center + offset + halfHole, end: width }
+        ];
     } else {
-        // Level 2+: Two holes
+        // Level 2 & 3: Two holes
         // Hole 1 centered at center - GAP_OFFSET
         // Hole 2 centered at center + GAP_OFFSET
         //
@@ -628,8 +639,8 @@ function getWallSegments() {
 
 function getObstacles() {
     const level = topWins + bottomWins;
-    // Obstacles start appearing after 2 wins (Level 2+)
-    if (level < 2) return [];
+    // Obstacles start appearing after 2 wins (Level 2 & 3 only)
+    if (level < 2 || level >= 4) return [];
 
     const center = width / 2;
     const hole1Center = center - GAP_OFFSET;
