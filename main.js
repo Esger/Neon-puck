@@ -5,7 +5,9 @@ const WALL_THICKNESS = 20;
 const FRICTION = 0.995;
 const BOUNCE_DAMPING = 0.9;
 const MAX_SPEED = 50;
+
 const DRAG_FORCE = 0.30;
+const GAP_OFFSET = Math.min(200, document.documentElement.clientWidth / 4);
 
 // State
 let canvas, ctx;
@@ -15,7 +17,12 @@ let winner = null;
 let pucks = [];
 let activeTouches = new Map(); // Key: touchId, Value: { puckIndex, startX, startY, currentX, currentY, anchor, side }
 let winTimestamp = null;
+
 let width, height;
+
+// Score State
+let topWins = 0;
+let bottomWins = 0;
 
 // Initialization
 function init() {
@@ -37,6 +44,7 @@ function init() {
 
     // Start Loop
     loop();
+    updateScoreUI();
 }
 
 function handleResize() {
@@ -131,31 +139,37 @@ function update() {
             if (puck.y - PUCK_RADIUS < 0) { puck.y = PUCK_RADIUS; puck.vy *= -BOUNCE_DAMPING; }
             if (puck.y + PUCK_RADIUS > height) { puck.y = height - PUCK_RADIUS; puck.vy *= -BOUNCE_DAMPING; }
 
-            // Center Barrier
+            // Center Barrier Logic
             const wallY = height / 2;
-            const wallLeftEnd = width / 2 - HOLE_WIDTH / 2;
-            const wallRightStart = width / 2 + HOLE_WIDTH / 2;
             const halfWallThick = WALL_THICKNESS / 2;
 
-            // Rectangular parts
-            if (puck.y + PUCK_RADIUS >= wallY - halfWallThick && puck.y - PUCK_RADIUS <= wallY + halfWallThick) {
-                // Left Wall
-                if (puck.x <= wallLeftEnd) {
-                    if (puck.y < wallY) puck.y = wallY - halfWallThick - PUCK_RADIUS - 1;
-                    else puck.y = wallY + halfWallThick + PUCK_RADIUS + 1;
-                    puck.vy *= -BOUNCE_DAMPING;
-                }
-                // Right Wall
-                else if (puck.x >= wallRightStart) {
-                    if (puck.y < wallY) puck.y = wallY - halfWallThick - PUCK_RADIUS - 1;
-                    else puck.y = wallY + halfWallThick + PUCK_RADIUS + 1;
-                    puck.vy *= -BOUNCE_DAMPING;
-                }
-            }
+            const walls = getWallSegments();
 
-            // Cap Collisions (Circles at ends of walls)
-            checkCapCollision(puck, wallLeftEnd, wallY, halfWallThick);
-            checkCapCollision(puck, wallRightStart, wallY, halfWallThick);
+            walls.forEach(segment => {
+                const wallLeft = segment.start;
+                const wallRight = segment.end;
+
+                // Rectangular parts
+                if (puck.y + PUCK_RADIUS >= wallY - halfWallThick && puck.y - PUCK_RADIUS <= wallY + halfWallThick) {
+                    if (puck.x >= wallLeft && puck.x <= wallRight) {
+                        if (puck.y < wallY) puck.y = wallY - halfWallThick - PUCK_RADIUS - 1;
+                        else puck.y = wallY + halfWallThick + PUCK_RADIUS + 1;
+                        puck.vy *= -BOUNCE_DAMPING;
+                    }
+                }
+
+                // Cap Collisions (Circles at ends of walls)
+                // We check caps for every segment end, unless it's the screen edge
+                if (wallLeft > 0) checkCapCollision(puck, wallLeft, wallY, halfWallThick);
+                if (wallRight < width) checkCapCollision(puck, wallRight, wallY, halfWallThick);
+            });
+
+            // Obstacles
+            const obstacles = getObstacles();
+            obstacles.forEach(obs => {
+                checkCapCollision(puck, obs.x, obs.y, obs.radius);
+            });
+
 
             // Ball-to-Ball Collisions
             for (let j = index + 1; j < pucks.length; j++) {
@@ -244,12 +258,16 @@ function update() {
         else if (Date.now() > winTimestamp) {
             gameState = "won";
             winner = "top";
+            topWins++;
+            updateScoreUI();
         }
     } else if (bottomCount === 0) {
         if (!winTimestamp) winTimestamp = Date.now() + 800; // 1 second delay
         else if (Date.now() > winTimestamp) {
             gameState = "won";
             winner = "bottom";
+            bottomWins++;
+            updateScoreUI();
         }
     } else {
         winTimestamp = null; // Reset if condition lost (e.g. ball bounces back?)
@@ -293,17 +311,24 @@ function render() {
     ctx.shadowBlur = 15;
     ctx.shadowColor = "#ffffff";
 
-    // Center Line Left
-    ctx.beginPath();
-    ctx.moveTo(0, height / 2);
-    ctx.lineTo(width / 2 - HOLE_WIDTH / 2, height / 2);
-    ctx.stroke();
+    const walls = getWallSegments();
+    walls.forEach(segment => {
+        ctx.beginPath();
+        ctx.moveTo(segment.start, height / 2);
+        ctx.lineTo(segment.end, height / 2);
+        ctx.lineTo(segment.end, height / 2);
+        ctx.stroke();
+    });
 
-    // Center Line Right
-    ctx.beginPath();
-    ctx.moveTo(width / 2 + HOLE_WIDTH / 2, height / 2);
-    ctx.lineTo(width, height / 2);
-    ctx.stroke();
+    const obstacles = getObstacles();
+    obstacles.forEach(obs => {
+        ctx.beginPath();
+        ctx.arc(obs.x, obs.y, obs.radius, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffffff";
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = "#ffffff";
+        ctx.fill();
+    });
 
     ctx.shadowBlur = 0;
     ctx.lineCap = "butt";
@@ -543,3 +568,110 @@ function onTouchEnd(e) {
 
 // Init
 init();
+
+function updateScoreUI() {
+    document.getElementById('score-top').innerHTML = renderTallyHTML(topWins);
+    document.getElementById('score-bottom').innerHTML = renderTallyHTML(bottomWins);
+}
+
+function renderTallyHTML(count) {
+    let html = '';
+    const blocks = Math.floor(count / 5);
+    const remainder = count % 5;
+
+    for (let i = 0; i < blocks; i++) {
+        html += '<div class="tally-block"><div class="mark"></div><div class="mark"></div><div class="mark"></div><div class="mark"></div><div class="slash"></div></div>';
+    }
+
+    if (remainder > 0) {
+        html += '<div class="tally-block">';
+        for (let i = 0; i < remainder; i++) {
+            html += '<div class="mark"></div>';
+        }
+        html += '</div>';
+    }
+
+    return html;
+}
+
+function getWallSegments() {
+    const level = topWins + bottomWins;
+    const center = width / 2;
+    const halfHole = HOLE_WIDTH / 2;
+
+
+
+    if (level === 0) {
+        // Level 1: One central hole
+        return [
+            { start: 0, end: center - halfHole },
+            { start: center + halfHole, end: width }
+        ];
+    } else if (level >= 4) {
+        // Level 4: One moving hole
+        const speed = 0.0015;
+        const range = width * 0.22;
+        const offset = Math.sin(Date.now() * speed) * range;
+        return [
+            { start: 0, end: center + offset - halfHole },
+            { start: center + offset + halfHole, end: width }
+        ];
+    } else {
+        // Level 2 & 3: Two holes
+        // Hole 1 centered at center - GAP_OFFSET
+        // Hole 2 centered at center + GAP_OFFSET
+        //
+        // Walls:
+        // 1. Left of Hole 1
+        // 2. Between Hole 1 and Hole 2 (Central Block)
+        // 3. Right of Hole 2
+
+        const hole1Center = center - GAP_OFFSET;
+        const hole2Center = center + GAP_OFFSET;
+
+        return [
+            { start: 0, end: hole1Center - halfHole }, // Left Wall
+            { start: hole1Center + halfHole, end: hole2Center - halfHole }, // Middle Block
+            { start: hole2Center + halfHole, end: width } // Right Wall
+        ];
+    }
+}
+
+function getObstacles() {
+    const level = topWins + bottomWins;
+    // Obstacles start appearing after 2 wins (Level 2 & 3 only)
+    if (level < 2 || level >= 4) return [];
+
+    const center = width / 2;
+    const hole1Center = center - GAP_OFFSET;
+    const hole2Center = center + GAP_OFFSET;
+
+    // Positioned exactly between wall and rubber band
+    // Wall Y = height/2
+    // Top Band Y = height * 0.15
+    // Bottom Band Y = height * 0.85
+
+    const topObsY = (height / 2 + height * 0.15) / 2;
+    const bottomObsY = (height / 2 + height * 0.85) / 2;
+
+    // Slightly bigger than half wall thickness to appear thicker visually
+    const radius = (WALL_THICKNESS / 2) * 1.3;
+
+    const level1Obstacles = [
+        { x: hole2Center, y: topObsY, radius: radius },
+        { x: hole1Center, y: bottomObsY, radius: radius },
+    ];
+
+    const level2Obstacles = [
+        { x: hole1Center, y: topObsY, radius: radius },
+        { x: hole2Center, y: bottomObsY, radius: radius },
+    ];
+
+    if (level === 2) {
+        // Level 2: Only top obstacles (as requested "top left and top right")
+        return level1Obstacles;
+    } else {
+        // Level 3+: 4 obstacles
+        return [...level1Obstacles, ...level2Obstacles];
+    }
+}
