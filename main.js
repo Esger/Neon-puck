@@ -609,7 +609,9 @@ function getWallSegments() {
         ];
     } else if (level >= 4) {
         // Level 4: One moving hole
-        const speed = 0.0015;
+        // Adjust speed based on width to maintain consistent linear velocity across different screen sizes
+        // Base value 0.0015 is tuned for 375px; wider screens need lower frequency since the range is larger.
+        const speed = 0.0015 * (375 / width);
         const range = width * 0.22;
         const offset = Math.sin(Date.now() * speed) * range;
         return [
