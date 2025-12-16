@@ -40,7 +40,10 @@ function init() {
 
     canvas.addEventListener('touchstart', onTouchStart, { passive: false });
     canvas.addEventListener('touchmove', onTouchMove, { passive: false });
-    window.addEventListener('touchend', onTouchEnd);
+    window.addEventListener('touchend', onTouchEnd, { passive: false });
+    // Android can fire touchcancel (system gestures / app switch / notification shade).
+    // If we don't end these touches, a puck can remain "dragged" forever (looks frozen).
+    window.addEventListener('touchcancel', onTouchCancel, { passive: false });
 
     // Start Loop
     loop();
@@ -61,7 +64,15 @@ function handleResize() {
     canvas.height = height * dpr;
 
     // Normalize coordinate system to use css pixels
-    ctx.scale(dpr, dpr);
+    // IMPORTANT: don't accumulate scaling across resizes (common source of mobile lockups
+    // after orientation/address-bar changes). Reset transform each time.
+    if (typeof ctx.setTransform === 'function') {
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    } else {
+        // Fallback (older browsers)
+        if (typeof ctx.resetTransform === 'function') ctx.resetTransform();
+        ctx.scale(dpr, dpr);
+    }
 
     // If we resize during play, we might need to clamp pucks, but for now just let them be
     if (gameState === "start") {
@@ -281,8 +292,10 @@ function checkCapCollision(puck, capX, capY, halfWallThick) {
     const radiusSum = halfWallThick + PUCK_RADIUS;
 
     if (dist < radiusSum) {
-        const nx = dx / dist;
-        const ny = dy / dist;
+        // Guard against dist === 0 which would generate NaNs and can freeze gameplay.
+        const safeDist = dist > 1e-6 ? dist : 1e-6;
+        const nx = dx / safeDist;
+        const ny = dy / safeDist;
         const overlap = radiusSum - dist;
 
         puck.x += nx * overlap;
@@ -559,6 +572,14 @@ function onTouchMove(e) {
     }
 }
 function onTouchEnd(e) {
+    e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        handleEnd(t.identifier);
+    }
+}
+
+function onTouchCancel(e) {
     e.preventDefault();
     for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
