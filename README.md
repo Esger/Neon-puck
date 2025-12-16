@@ -1,3 +1,3 @@
-# Sling-puck-antigravity
+# Neon Puck
 
 `npx vite` to run the project
