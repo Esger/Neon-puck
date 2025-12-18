@@ -21,8 +21,10 @@ let winTimestamp = null;
 let width, height;
 
 // Score State
+// Score State
 let topWins = 0;
 let bottomWins = 0;
+let currentLevel = 0;
 
 // Initialization
 function init() {
@@ -111,6 +113,7 @@ function startGame() {
     gameState = "playing";
     winner = null;
     winTimestamp = null;
+    currentLevel = topWins + bottomWins;
 }
 
 // Game Loop
@@ -616,10 +619,9 @@ function renderTallyHTML(count) {
 }
 
 function getWallSegments() {
-    const level = topWins + bottomWins;
+    const level = currentLevel;
     const center = width / 2;
     const halfHole = HOLE_WIDTH / 2;
-
 
 
     if (level === 0) {
@@ -661,7 +663,7 @@ function getWallSegments() {
 }
 
 function getObstacles() {
-    const level = topWins + bottomWins;
+    const level = currentLevel;
     // Obstacles start appearing after 2 wins (Level 2 & 3 only)
     if (level < 2 || level >= 4) return [];
 
