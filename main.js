@@ -619,84 +619,87 @@ function renderTallyHTML(count) {
 }
 
 function getWallSegments() {
-    const level = currentLevel;
+    const level = currentLevel + 1; // 0-based wins -> 1-based levels
     const center = width / 2;
     const halfHole = HOLE_WIDTH / 2;
 
+    // Helper for moving hole offset
+    const getOffset = (speedFactor, rangeFactor, phase = 0) => {
+        // Scale speed by width so it looks consistent on all devices
+        const speed = 0.0015 * (375 / width) * speedFactor;
+        const range = width * rangeFactor;
+        return Math.sin(Date.now() * speed + phase) * range;
+    };
 
-    if (level === 0) {
-        // Level 1: One central hole
+    if (level === 1) {
+        // 1 gat (Static)
         return [
             { start: 0, end: center - halfHole },
             { start: center + halfHole, end: width }
         ];
-    } else if (level >= 4) {
-        // Level 4: One moving hole
-        // Adjust speed based on width to maintain consistent linear velocity across different screen sizes
-        // Base value 0.0015 is tuned for 375px; wider screens need lower frequency since the range is larger.
-        const speed = 0.0015 * (375 / width);
-        const range = width * 0.22;
-        const offset = Math.sin(Date.now() * speed) * range;
+
+    } else if (level === 2 || level === 5) {
+        // 2 - 1 bewegend gat
+        // 5 - 1 bewegend gat (+ obstakels defined in getObstacles)
+        const offset = getOffset(1.0, 0.22);
         return [
             { start: 0, end: center + offset - halfHole },
             { start: center + offset + halfHole, end: width }
         ];
-    } else {
-        // Level 2 & 3: Two holes
-        // Hole 1 centered at center - GAP_OFFSET
-        // Hole 2 centered at center + GAP_OFFSET
-        //
-        // Walls:
-        // 1. Left of Hole 1
-        // 2. Between Hole 1 and Hole 2 (Central Block)
-        // 3. Right of Hole 2
 
+    } else if (level === 3) {
+        // 3 - 2 gaten (Static)
         const hole1Center = center - GAP_OFFSET;
         const hole2Center = center + GAP_OFFSET;
+        return [
+            { start: 0, end: hole1Center - halfHole },
+            { start: hole1Center + halfHole, end: hole2Center - halfHole },
+            { start: hole2Center + halfHole, end: width }
+        ];
+
+    } else if (level === 4 || level >= 6) {
+        // 4 - 2 bewegende gaten; 1 sneller 1 langzamer
+        // 6 - 2 bewegende gaten (+ obstakels defined in getObstacles)
+
+        // Hole 1: Slower
+        const baseHole1 = center - GAP_OFFSET;
+        const offset1 = getOffset(0.7, 0.1);
+        const h1 = baseHole1 + offset1;
+
+        // Hole 2: Faster
+        const baseHole2 = center + GAP_OFFSET;
+        const offset2 = getOffset(1.3, 0.1, Math.PI); // Phase shift so they don't sync perfectly
+        const h2 = baseHole2 + offset2;
 
         return [
-            { start: 0, end: hole1Center - halfHole }, // Left Wall
-            { start: hole1Center + halfHole, end: hole2Center - halfHole }, // Middle Block
-            { start: hole2Center + halfHole, end: width } // Right Wall
+            { start: 0, end: h1 - halfHole }, // Left
+            { start: h1 + halfHole, end: h2 - halfHole }, // Middle
+            { start: h2 + halfHole, end: width } // Right
         ];
     }
+
+    // Default Fallback
+    return [
+        { start: 0, end: center - halfHole },
+        { start: center + halfHole, end: width }
+    ];
 }
 
 function getObstacles() {
-    const level = currentLevel;
-    // Obstacles start appearing after 2 wins (Level 2 & 3 only)
-    if (level < 2 || level >= 4) return [];
-
+    const level = currentLevel + 1; // 0-based wins -> 1-based levels
+    const obsList = [];
+    const radius = (WALL_THICKNESS / 2) * 1.3;
     const center = width / 2;
-    const hole1Center = center - GAP_OFFSET;
-    const hole2Center = center + GAP_OFFSET;
 
-    // Positioned exactly between wall and rubber band
-    // Wall Y = height/2
-    // Top Band Y = height * 0.15
-    // Bottom Band Y = height * 0.85
-
+    // Obstacle Y positions (approx halfway between wall and rubber band)
     const topObsY = (height / 2 + height * 0.15) / 2;
     const bottomObsY = (height / 2 + height * 0.85) / 2;
 
-    // Slightly bigger than half wall thickness to appear thicker visually
-    const radius = (WALL_THICKNESS / 2) * 1.3;
-
-    const level1Obstacles = [
-        { x: hole2Center, y: topObsY, radius: radius },
-        { x: hole1Center, y: bottomObsY, radius: radius },
-    ];
-
-    const level2Obstacles = [
-        { x: hole1Center, y: topObsY, radius: radius },
-        { x: hole2Center, y: bottomObsY, radius: radius },
-    ];
-
-    if (level === 2) {
-        // Level 2: Only top obstacles (as requested "top left and top right")
-        return level1Obstacles;
-    } else {
-        // Level 3+: 4 obstacles
-        return [...level1Obstacles, ...level2Obstacles];
+    if (level === 5 || level >= 6) {
+        // Levels 5 & 6: 2 obstacles total (1 Top Center, 1 Bottom Center)
+        obsList.push({ x: center, y: topObsY, radius: radius });
+        obsList.push({ x: center, y: bottomObsY, radius: radius });
     }
+
+    return obsList;
 }
