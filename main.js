@@ -426,22 +426,52 @@ function drawBand(y, side, color) {
 }
 
 function drawOverlay(title, subtitle, color) {
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    // Pulsing semi-transparent background
+    const pulse = Math.abs(Math.sin(Date.now() * 0.002)) * 0.1 + 0.7; // 0.7 to 0.8 opacity
+    ctx.fillStyle = `rgba(0,0,0,${pulse})`;
     ctx.fillRect(0, 0, width, height);
 
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
-    ctx.font = "bold 60px Arial";
-    ctx.fillStyle = color;
-    ctx.shadowBlur = 20;
-    ctx.shadowColor = color;
-    ctx.fillText(title, width / 2, height / 2 - 20);
-    ctx.shadowBlur = 0;
+    // Main Title with Heavy Glow
+    let fontSize = 90; // Bigger basic size cause it's condensed
+    ctx.font = `bold ${fontSize}px 'Barlow Condensed', sans-serif`;
 
-    ctx.font = "30px Arial";
+    // Auto-scale down if text is wider than screen
+    let textWidth = ctx.measureText(title).width;
+    const maxTextWidth = width * 0.9;
+
+    if (textWidth > maxTextWidth) {
+        fontSize = Math.floor(fontSize * (maxTextWidth / textWidth));
+        ctx.font = `bold ${fontSize}px 'Barlow Condensed', sans-serif`;
+    }
+
+    ctx.fillStyle = color;
+    ctx.shadowBlur = 40 + Math.abs(Math.sin(Date.now() * 0.005)) * 20; // Pulsing glow
+    ctx.shadowColor = color;
+    ctx.fillText(title, width / 2, height / 2 - 30);
+
+    // Subtitle background pill
+    const subFont = "30px Arial";
+    ctx.font = subFont;
+    const subWidth = ctx.measureText(subtitle).width;
+    const pad = 20;
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
+    ctx.roundRect(width / 2 - subWidth / 2 - pad, height / 2 + 20, subWidth + pad * 2, 50, 25);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Subtitle Text
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(subtitle, width / 2, height / 2 + 40);
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = "#ffffff";
+    ctx.fillText(subtitle, width / 2, height / 2 + 45);
+    ctx.shadowBlur = 0;
 }
 
 // Input Handling
