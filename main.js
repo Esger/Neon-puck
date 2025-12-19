@@ -40,7 +40,11 @@ function init() {
     document.getElementById('game-container').appendChild(canvas);
     ctx = canvas.getContext('2d');
 
-    window.addEventListener('resize', handleResize);
+    // Use ResizeObserver for more robust sizing (fixes first-load issues)
+    const resizeObserver = new ResizeObserver(() => handleResize());
+    resizeObserver.observe(document.getElementById('game-container'));
+
+    // Initial size set
     handleResize();
 
     // Input Listeners
