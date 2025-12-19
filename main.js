@@ -7,11 +7,15 @@ const BOUNCE_DAMPING = 0.9;
 const MAX_SPEED = 50;
 
 const DRAG_FORCE = 0.30;
-const GAP_OFFSET = Math.min(200, document.documentElement.clientWidth / 4);
+// We'll calculate dynamic GAP_OFFSET inside the level config to be responsive, or update it on resize.
+// For now, let's keep it global but we might need to refresh it.
+let GAP_OFFSET = 200; // Will be updated in handleResize
 
 // State
 let canvas, ctx;
 let animationFrameId;
+let lastFrameTime = 0;
+let holePhases = [0, 0];
 let gameState = "start"; // "start", "playing", "won"
 let winner = null;
 let pucks = [];
@@ -21,10 +25,14 @@ let winTimestamp = null;
 let width, height;
 
 // Score State
-// Score State
 let topWins = 0;
 let bottomWins = 0;
+
+// Level Transition State
 let currentLevel = 0;
+let transitionStartTime = 0;
+let transitionDuration = 2000; // 2 seconds transition
+let previousLevel = 0;
 
 // Initialization
 function init() {
@@ -43,11 +51,10 @@ function init() {
     canvas.addEventListener('touchstart', onTouchStart, { passive: false });
     canvas.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('touchend', onTouchEnd, { passive: false });
-    // Android can fire touchcancel (system gestures / app switch / notification shade).
-    // If we don't end these touches, a puck can remain "dragged" forever (looks frozen).
     window.addEventListener('touchcancel', onTouchCancel, { passive: false });
 
     // Start Loop
+    lastFrameTime = performance.now();
     loop();
     updateScoreUI();
 }
@@ -57,34 +64,26 @@ function handleResize() {
     const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
 
-    // Set display size (css pixels)
     width = rect.width;
     height = rect.height;
 
-    // Set actual size in memory (scaled to account for extra pixel density)
     canvas.width = width * dpr;
     canvas.height = height * dpr;
 
-    // Normalize coordinate system to use css pixels
-    // IMPORTANT: don't accumulate scaling across resizes (common source of mobile lockups
-    // after orientation/address-bar changes). Reset transform each time.
     if (typeof ctx.setTransform === 'function') {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     } else {
-        // Fallback (older browsers)
         if (typeof ctx.resetTransform === 'function') ctx.resetTransform();
         ctx.scale(dpr, dpr);
     }
 
-    // If we resize during play, we might need to clamp pucks, but for now just let them be
-    if (gameState === "start") {
-        // Re-init if needed or just wait for start
-    }
+    // Update GAP_OFFSET based on new width
+    GAP_OFFSET = Math.min(200, document.documentElement.clientWidth / 4);
 }
 
 function startGame() {
     pucks = [];
-    activeTouches.clear(); // Clear any active touches
+    activeTouches.clear();
 
     // Spawn 5 pucks for Top Player
     for (let i = 0; i < 5; i++) {
@@ -94,7 +93,7 @@ function startGame() {
             y: height * 0.25 + (Math.random() * 100 - 50),
             vx: 0,
             vy: 0,
-            color: "#00ff00" // Green
+            color: "#00ff00"
         });
     }
 
@@ -106,18 +105,275 @@ function startGame() {
             y: height * 0.75 + (Math.random() * 100 - 50),
             vx: 0,
             vy: 0,
-            color: "#00ff00" // Green
+            color: "#00ff00"
         });
     }
 
     gameState = "playing";
     winner = null;
     winTimestamp = null;
-    currentLevel = topWins + bottomWins;
+
+    // Set up transition
+    previousLevel = currentLevel;
+    // Current Level logic: wins=0 -> Level 1 (index 0). 
+    // Wait, my previous code used: level = topWins + bottomWins + 1.
+    // If we use currentLevel variable to store the "target level index", it's easier.
+    // Let's say currentLevel stores the *target* wins count.
+    const targetWins = topWins + bottomWins;
+
+    // Only transition if level actually changed?
+    // User wants "when advancing".
+    // Even if we restart (same level), animating is fine? Maybe weird.
+    // Let's always animate "into" the level.
+
+    previousLevel = currentLevel; // This stores the previous WINS count.
+    currentLevel = targetWins;
+
+    transitionStartTime = Date.now();
+}
+
+// Level Configuration Helper
+function getLevelConfig(wins) {
+    const levelIndex = wins + 1; // 1-based level index
+
+    // Base Config
+    // holes: array of { baseOffset, speedFactor, rangeFactor, phase }
+    // obstacles: boolean (true/false) - we interpolate radius 0->1
+
+    // Level 1: 1 Static Hole (Center)
+    if (levelIndex === 1) {
+        return {
+            holes: [
+                { baseOffset: 0, speedFactor: 0, rangeFactor: 0, phase: 0 },
+                { baseOffset: 0, speedFactor: 0, rangeFactor: 0, phase: 0 } // Second hole overlaps first
+            ],
+            hasObstacles: false
+        };
+    }
+
+    // Level 2: 1 Moving Hole (Center)
+    if (levelIndex === 2) {
+        return {
+            holes: [
+                { baseOffset: 0, speedFactor: 1.0, rangeFactor: 0.22, phase: 0 },
+                { baseOffset: 0, speedFactor: 1.0, rangeFactor: 0.22, phase: 0 }
+            ],
+            hasObstacles: false
+        };
+    }
+
+    // Level 3: 2 Static Holes
+    if (levelIndex === 3) {
+        return {
+            holes: [
+                { baseOffset: -GAP_OFFSET, speedFactor: 0, rangeFactor: 0, phase: 0 },
+                { baseOffset: GAP_OFFSET, speedFactor: 0, rangeFactor: 0, phase: 0 }
+            ],
+            hasObstacles: false
+        };
+    }
+
+    // Level 4: 2 Moving Holes (Split)
+    if (levelIndex === 4) {
+        return {
+            holes: [
+                { baseOffset: -GAP_OFFSET, speedFactor: 0.35, rangeFactor: 0.35, phase: 0 },       // H1 Slower
+                { baseOffset: GAP_OFFSET, speedFactor: 0.65, rangeFactor: 0.35, phase: Math.PI }  // H2 Faster
+            ],
+            hasObstacles: false
+        };
+    }
+
+    // Level 5: 1 Moving Hole (Center) + Obstacles
+    if (levelIndex === 5) {
+        return {
+            holes: [
+                { baseOffset: 0, speedFactor: 1.0, rangeFactor: 0.22, phase: 0 },
+                { baseOffset: 0, speedFactor: 1.0, rangeFactor: 0.22, phase: 0 }
+            ],
+            hasObstacles: true
+        };
+    }
+
+    // Level 6+: 2 Moving Holes + Obstacles
+    if (levelIndex >= 6) {
+        return {
+            holes: [
+                { baseOffset: -GAP_OFFSET, speedFactor: 0.35, rangeFactor: 0.35, phase: 0 },       // H1 Slower
+                { baseOffset: GAP_OFFSET, speedFactor: 0.65, rangeFactor: 0.35, phase: Math.PI }  // H2 Faster
+            ],
+            hasObstacles: true
+        };
+    }
+
+    // Fallback
+    return {
+        holes: [{ baseOffset: 0, speedFactor: 0, rangeFactor: 0, phase: 0 }, { baseOffset: 0, speedFactor: 0, rangeFactor: 0, phase: 0 }],
+        hasObstacles: false
+    };
+}
+
+// Lerp Helper
+function lerp(start, end, t) {
+    return start + (end - start) * t;
+}
+
+// Easing Helper (Optional, simplified ease-out)
+function easeOutQuad(t) {
+    return t * (2 - t);
+}
+
+function getInterpolatedParams() {
+    const time = Date.now();
+    let t = (time - transitionStartTime) / transitionDuration;
+    if (t > 1) t = 1;
+    if (t < 0) t = 0;
+
+    t = easeOutQuad(t); // Smooth ease out
+
+    const startConfig = getLevelConfig(previousLevel);
+    const endConfig = getLevelConfig(currentLevel);
+
+    // Interpolate Holes
+    const holes = [];
+    for (let i = 0; i < 2; i++) {
+        const hStart = startConfig.holes[i];
+        const hEnd = endConfig.holes[i];
+
+        holes.push({
+            baseOffset: lerp(hStart.baseOffset, hEnd.baseOffset, t),
+            speedFactor: lerp(hStart.speedFactor, hEnd.speedFactor, t),
+            rangeFactor: lerp(hStart.rangeFactor, hEnd.rangeFactor, t),
+            phase: lerp(hStart.phase, hEnd.phase, t) // Phase might spin if significant diff, but usually 0 or PI.
+            // If phase flips 0 -> PI, it will rotate gracefully? Yes.
+        });
+    }
+
+    // Interpolate Obstacle Presence (Radius multiplier)
+    // If start has obs and end has obs: 1 -> 1
+    // If start=0, end=1: 0 -> 1 (Grow)
+    // If start=1, end=0: 1 -> 0 (Shrink)
+
+    const obsStart = startConfig.hasObstacles ? 1.0 : 0.0;
+    const obsEnd = endConfig.hasObstacles ? 1.0 : 0.0;
+    const obsScale = lerp(obsStart, obsEnd, t);
+
+    return { holes, obsScale };
+}
+
+
+// Updatable state for wall segments (calculated in update, used in render)
+let currentParamState = null;
+
+// Updated getWallSegments using interpolated params
+function getWallSegments() {
+    // If we haven't calculated state yet (e.g. first frame), do it
+    if (!currentParamState) return [];
+
+    const center = width / 2;
+    const halfHole = HOLE_WIDTH / 2;
+
+    const pos1 = center + currentParamState.holes[0].baseOffset + currentParamState.holes[0].offsetVal;
+    const pos2 = center + currentParamState.holes[1].baseOffset + currentParamState.holes[1].offsetVal;
+
+    // Always render 2 holes, sort them Left->Right to generate walls
+    // If they overlap perfectly (like in Level 1/2/5), logic handles it.
+
+    const holes = [pos1, pos2].sort((a, b) => a - b);
+    const leftHole = holes[0];
+    const rightHole = holes[1];
+
+    // Walls:
+    // 0 -> leftHole - half
+    // leftHole + half -> rightHole - half
+    // rightHole + half -> width
+
+    // Safety clamp (though canvas coord don't crash, logical errors might occur if leftHole > rightHole due to sorting? No, sorted.)
+    // But if (leftHole + half) > (rightHole - half), the middle wall is inverted (gap).
+    // The physics loop handles inverted intervals as "match fail", i.e. NO wall.
+    // However, renderer draws lineTo(end), which draws backwards lines filling the hole. Filter them out!
+
+    const segments = [
+        { start: 0, end: leftHole - halfHole },
+        { start: leftHole + halfHole, end: rightHole - halfHole },
+        { start: rightHole + halfHole, end: width }
+    ];
+
+    return segments.filter(s => s.end > s.start);
+}
+
+// Updated getObstacles
+function getObstacles() {
+    // Rely on the params calculated in update()
+    if (!currentParamState || currentParamState.obsScale <= 0.01) return [];
+
+    // Use params.obsScale ...
+
+    const obsList = [];
+    // Target Radius
+    const targetRadius = (WALL_THICKNESS / 2) * 1.3;
+    const currentRadius = targetRadius * currentParamState.obsScale;
+
+    const center = width / 2;
+    const topObsY = (height / 2 + height * 0.15) / 2;
+    const bottomObsY = (height / 2 + height * 0.85) / 2;
+
+    // Levels 5 & 6+ have obstacles.
+    // Our interpolate params just says "obsScale".
+    // Wait, WHERE are the obstacles?
+    // In Level 5/6, they are always CENTERED.
+    // If we transition to Level 5/6, we spawn them at center.
+    // If previously we had obstacles at designated spots, we'd need to interpolate position too.
+    // But fortunately, in the previous design, they were separate logic.
+    // In the new request: "obstacles enter the scene by growing out of 0, in place".
+    // Since Level 5 and 6 BOTH have Central Obstacles, position interpolation isn't needed between them.
+    // Between L4 -> L5 (No obs -> Center obs): they grow at center. Correct.
+
+    obsList.push({ x: center, y: topObsY, radius: currentRadius });
+    obsList.push({ x: center, y: bottomObsY, radius: currentRadius });
+
+    return obsList;
 }
 
 // Game Loop
 function loop() {
+    const now = performance.now();
+    const dt = now - lastFrameTime;
+    lastFrameTime = now;
+
+    // Update Phase State
+    const params = getInterpolatedParams();
+
+    // We update phase accumulators using the interpolated speed factor
+    // Base Speed logic: 0.0015 originally meant multiplier for Date.now() (ms).
+    // So speed is radians per ms.
+    // 0.0015 * (375 / width) is the base speed constant.
+    const baseSpeedConst = 0.0015 * (375 / width);
+
+    // Update Hole 1
+    const s1 = params.holes[0].speedFactor * baseSpeedConst;
+    holePhases[0] += s1 * dt;
+
+    // Update Hole 2
+    const s2 = params.holes[1].speedFactor * baseSpeedConst;
+    holePhases[1] += s2 * dt;
+
+    // Calc offsets for this frame
+    const h1 = params.holes[0];
+    const h2 = params.holes[1];
+
+    // offset = sin(accumulatedPhase + targetPhaseShift) * range
+    const off1 = Math.sin(holePhases[0] + h1.phase) * (width * h1.rangeFactor);
+    const off2 = Math.sin(holePhases[1] + h2.phase) * (width * h2.rangeFactor);
+
+    currentParamState = {
+        holes: [
+            { baseOffset: h1.baseOffset, offsetVal: off1 },
+            { baseOffset: h2.baseOffset, offsetVal: off2 }
+        ],
+        obsScale: params.obsScale
+    };
+
     update();
     render();
     animationFrameId = requestAnimationFrame(loop);
@@ -339,7 +595,7 @@ function render() {
     const obstacles = getObstacles();
     obstacles.forEach(obs => {
         ctx.beginPath();
-        ctx.arc(obs.x, obs.y, obs.radius, 0, Math.PI * 2);
+        ctx.arc(obs.x, obs.y, myMax(0, obs.radius), 0, Math.PI * 2); // Ensure positive radius
         ctx.fillStyle = "#ffffff";
         ctx.shadowBlur = 15;
         ctx.shadowColor = "#ffffff";
@@ -383,6 +639,7 @@ function render() {
         drawOverlay(text, "Click to Restart", color);
     }
 }
+function myMax(a, b) { return a > b ? a : b; }
 
 function drawBand(y, side, color) {
     ctx.beginPath();
@@ -646,102 +903,4 @@ function renderTallyHTML(count) {
     }
 
     return html;
-}
-
-function getWallSegments() {
-    const level = currentLevel + 1; // 0-based wins -> 1-based levels
-    const center = width / 2;
-    const halfHole = HOLE_WIDTH / 2;
-
-    // Helper for moving hole offset
-    const getOffset = (speedFactor, rangeFactor, phase = 0) => {
-        // Scale speed by width so it looks consistent on all devices
-        // Base speed restored to 0.0015 for single hole
-        const speed = 0.0015 * (375 / width) * speedFactor;
-        const range = width * rangeFactor;
-        return Math.sin(Date.now() * speed + phase) * range;
-    };
-
-    if (level === 1) {
-        // 1 gat (Static)
-        return [
-            { start: 0, end: center - halfHole },
-            { start: center + halfHole, end: width }
-        ];
-
-    } else if (level === 2 || level === 5) {
-        // 2 - 1 bewegend gat
-        // 5 - 1 bewegend gat (+ obstakels defined in getObstacles)
-        const offset = getOffset(1.0, 0.22);
-        return [
-            { start: 0, end: center + offset - halfHole },
-            { start: center + offset + halfHole, end: width }
-        ];
-
-    } else if (level === 3) {
-        // 3 - 2 gaten (Static)
-        const hole1Center = center - GAP_OFFSET;
-        const hole2Center = center + GAP_OFFSET;
-        return [
-            { start: 0, end: hole1Center - halfHole },
-            { start: hole1Center + halfHole, end: hole2Center - halfHole },
-            { start: hole2Center + halfHole, end: width }
-        ];
-
-    } else if (level === 4 || level >= 6) {
-        // 4 - 2 bewegende gaten; 1 sneller 1 langzamer
-        // 6 - 2 bewegende gaten (+ obstakels defined in getObstacles)
-
-        // Both holes centered, moving across the full width (overlapping)
-        // Range increased to 0.35 * width (approx 35% each way, total 70% coverage)
-
-        // Hole 1: Slower (0.7 -> 0.35: 50% slower than before)
-        const offset1 = getOffset(0.35, 0.35);
-        const h1 = center + offset1;
-
-        // Hole 2: Faster (1.3 -> 0.65: 50% slower than before)
-        const offset2 = getOffset(0.65, 0.35, Math.PI);
-        const h2 = center + offset2;
-
-        // Sort so we always draw LEFT -> RIGHT
-        const holes = [h1, h2].sort((a, b) => a - b);
-        const leftHole = holes[0];
-        const rightHole = holes[1];
-
-        // If holes overlap significantly, the "Middle" wall segment might have start > end.
-        // The game loop wall collision logic (x >= start && x <= end) handles this by 
-        // effectively treating it as no wall (a gap), which is visually and physically correct 
-        // for merged holes.
-
-        return [
-            { start: 0, end: leftHole - halfHole }, // Left
-            { start: leftHole + halfHole, end: rightHole - halfHole }, // Middle
-            { start: rightHole + halfHole, end: width } // Right
-        ];
-    }
-
-    // Default Fallback
-    return [
-        { start: 0, end: center - halfHole },
-        { start: center + halfHole, end: width }
-    ];
-}
-
-function getObstacles() {
-    const level = currentLevel + 1; // 0-based wins -> 1-based levels
-    const obsList = [];
-    const radius = (WALL_THICKNESS / 2) * 1.3;
-    const center = width / 2;
-
-    // Obstacle Y positions (approx halfway between wall and rubber band)
-    const topObsY = (height / 2 + height * 0.15) / 2;
-    const bottomObsY = (height / 2 + height * 0.85) / 2;
-
-    if (level === 5 || level >= 6) {
-        // Levels 5 & 6: 2 obstacles total (1 Top Center, 1 Bottom Center)
-        obsList.push({ x: center, y: topObsY, radius: radius });
-        obsList.push({ x: center, y: bottomObsY, radius: radius });
-    }
-
-    return obsList;
 }
