@@ -626,6 +626,7 @@ function getWallSegments() {
     // Helper for moving hole offset
     const getOffset = (speedFactor, rangeFactor, phase = 0) => {
         // Scale speed by width so it looks consistent on all devices
+        // Base speed restored to 0.0015 for single hole
         const speed = 0.0015 * (375 / width) * speedFactor;
         const range = width * rangeFactor;
         return Math.sin(Date.now() * speed + phase) * range;
@@ -661,20 +662,31 @@ function getWallSegments() {
         // 4 - 2 bewegende gaten; 1 sneller 1 langzamer
         // 6 - 2 bewegende gaten (+ obstakels defined in getObstacles)
 
-        // Hole 1: Slower
-        const baseHole1 = center - GAP_OFFSET;
-        const offset1 = getOffset(0.7, 0.1);
-        const h1 = baseHole1 + offset1;
+        // Both holes centered, moving across the full width (overlapping)
+        // Range increased to 0.35 * width (approx 35% each way, total 70% coverage)
 
-        // Hole 2: Faster
-        const baseHole2 = center + GAP_OFFSET;
-        const offset2 = getOffset(1.3, 0.1, Math.PI); // Phase shift so they don't sync perfectly
-        const h2 = baseHole2 + offset2;
+        // Hole 1: Slower (0.7 -> 0.35: 50% slower than before)
+        const offset1 = getOffset(0.35, 0.35);
+        const h1 = center + offset1;
+
+        // Hole 2: Faster (1.3 -> 0.65: 50% slower than before)
+        const offset2 = getOffset(0.65, 0.35, Math.PI);
+        const h2 = center + offset2;
+
+        // Sort so we always draw LEFT -> RIGHT
+        const holes = [h1, h2].sort((a, b) => a - b);
+        const leftHole = holes[0];
+        const rightHole = holes[1];
+
+        // If holes overlap significantly, the "Middle" wall segment might have start > end.
+        // The game loop wall collision logic (x >= start && x <= end) handles this by 
+        // effectively treating it as no wall (a gap), which is visually and physically correct 
+        // for merged holes.
 
         return [
-            { start: 0, end: h1 - halfHole }, // Left
-            { start: h1 + halfHole, end: h2 - halfHole }, // Middle
-            { start: h2 + halfHole, end: width } // Right
+            { start: 0, end: leftHole - halfHole }, // Left
+            { start: leftHole + halfHole, end: rightHole - halfHole }, // Middle
+            { start: rightHole + halfHole, end: width } // Right
         ];
     }
 
