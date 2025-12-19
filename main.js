@@ -640,7 +640,8 @@ function render() {
     } else if (gameState === "won") {
         const color = winner === "top" ? "#ff0099" : "#00f2ff";
         const text = winner === "top" ? "PINK WINS!" : "BLUE WINS!";
-        drawOverlay(text, "Click to Restart", color);
+        const rotation = winner === "top" ? Math.PI : 0;
+        drawOverlay(text, "Click to Restart", color, rotation);
     }
 }
 function myMax(a, b) { return a > b ? a : b; }
@@ -686,11 +687,15 @@ function drawBand(y, side, color) {
     ctx.shadowBlur = 0;
 }
 
-function drawOverlay(title, subtitle, color) {
+function drawOverlay(title, subtitle, color, rotation = 0) {
     // Pulsing semi-transparent background
     const pulse = Math.abs(Math.sin(Date.now() * 0.002)) * 0.1 + 0.7; // 0.7 to 0.8 opacity
     ctx.fillStyle = `rgba(0,0,0,${pulse})`;
     ctx.fillRect(0, 0, width, height);
+
+    ctx.save();
+    ctx.translate(width / 2, height / 2);
+    ctx.rotate(rotation);
 
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -711,7 +716,7 @@ function drawOverlay(title, subtitle, color) {
     ctx.fillStyle = color;
     ctx.shadowBlur = 40 + Math.abs(Math.sin(Date.now() * 0.005)) * 20; // Pulsing glow
     ctx.shadowColor = color;
-    ctx.fillText(title, width / 2, height / 2 - 30);
+    ctx.fillText(title, 0, -30);
 
     // Subtitle background pill
     const subFont = "30px Arial";
@@ -721,7 +726,7 @@ function drawOverlay(title, subtitle, color) {
 
     ctx.shadowBlur = 0;
     ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
-    ctx.roundRect(width / 2 - subWidth / 2 - pad, height / 2 + 20, subWidth + pad * 2, 50, 25);
+    ctx.roundRect(-subWidth / 2 - pad, 20, subWidth + pad * 2, 50, 25);
     ctx.fill();
     ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
     ctx.lineWidth = 2;
@@ -731,8 +736,10 @@ function drawOverlay(title, subtitle, color) {
     ctx.fillStyle = "#ffffff";
     ctx.shadowBlur = 10;
     ctx.shadowColor = "#ffffff";
-    ctx.fillText(subtitle, width / 2, height / 2 + 45);
+    ctx.fillText(subtitle, 0, 45);
     ctx.shadowBlur = 0;
+
+    ctx.restore();
 }
 
 // Input Handling
